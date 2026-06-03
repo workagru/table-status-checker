@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Mac-side generator: read the "2 Table Status" sheet, embed a work-list
+into the GP dry-run probe, and email it to the VDI.
+
+Runs on the Mac (has Google Sheets access). Produces a filled, self-
+contained probe with the row list baked in as base64, then sends it via
+gmail_send.py. The probe itself is read-only and never writes the sheet.
+"""
+import base64
+import json
+import os
+import subprocess
+import sys
+
+import gspread
+
+CREDENTIALS = "/Users/alexandrgruzdev/Downloads/sheets-tool-498316-6a47b98b256f.json"
+SPREADSHEET_ID = "1qoswNdf61-EdNFPF0wgQc2f7cgAeSvkc-CBYQ2rKZis"
+SHEET = "2 Table Status"
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+# probe template + email subject can be overridden by argv (default v1)
+PROBE = sys.argv[1] if len(sys.argv) > 1 else "check_table_status_dryrun_v2.py"
+SUBJECT = sys.argv[2] if len(sys.argv) > 2 else os.path.splitext(os.path.basename(PROBE))[0]
+TEMPLATE = PROBE if os.path.isabs(PROBE) else os.path.join(HERE, PROBE)
+REPO_ROOT = os.path.abspath(os.path.join(HERE, ".."))
+GMAIL_SEND = os.path.join(REPO_ROOT, "gmail_send.py")  # repo-local (gitignored, has app pw)
+
+# 0-based column indices in the sheet
+C_E, C_F, C_TYPE = 4, 5, 7
+STAGE_COLS = [8, 10, 12, 14, 16, 18]   # I,K,M,O,Q,S
+
+
+def build_worklist():
+    gc = gspread.service_account(filename=CREDENTIALS)
+    ws = gc.open_by_key(SPREADSHEET_ID).worksheet(SHEET)
+    vals = ws.get_all_values()
+    work = []
+    for i, row in enumerate(vals[1:], start=2):   # data starts at sheet row 2
+        def cell(idx):
+            return row[idx].strip() if idx < len(row) else ""
+        e, f, t = cell(C_E), cell(C_F), cell(C_TYPE)
+        if not (e or f):
+            continue
+        work.append({"r": i, "e": e, "f": f, "t": t,
+                     "cur": [cell(c) for c in STAGE_COLS]})
+    return work
+
+
+def main():
+    work = build_worklist()
+    print(f"worklist rows: {len(work)}")
+    from collections import Counter
+    print("by type:", dict(Counter((w["t"] or "?").lower() for w in work)))
+
+    payload = base64.b64encode(json.dumps(work, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    print(f"payload: {len(payload)} b64 chars (~{len(payload)//1024} KB)")
+
+    with open(TEMPLATE, encoding="utf-8") as fh:
+        src = fh.read()
+    if '"__WORKLIST_B64__"' not in src:
+        sys.exit("placeholder not found in template")
+    filled = src.replace('"__WORKLIST_B64__"', json.dumps(payload))
+
+    out = f"/tmp/{SUBJECT}_filled.py"
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write(filled)
+    print("wrote", out)
+
+    # send
+    cmd = [sys.executable, GMAIL_SEND, out, "--to", "agruzdev@simah.com",
+           "--subject", SUBJECT,
+           "--body", "GP-side DRY-RUN status checker (read-only). Prints proposed statuses, AGREE/CONFLICT buckets + gap report. No sheet writes."]
+    print("sending:", " ".join(cmd))
+    subprocess.run(cmd, check=True)
+
+
+if __name__ == "__main__":
+    main()

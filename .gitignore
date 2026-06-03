@@ -1,0 +1,14 @@
+# secrets — never commit
+# gmail_send.py contains the Gmail app password — use gmail_send.example.py
+gmail_send.py
+# service-account keys live OUTSIDE the repo
+*.json
+service-account*.json
+secrets.*
+
+# generated / transient
+# *_filled.py = probe with the work-list baked in (built by the generator)
+*_filled.py
+__pycache__/
+*.pyc
+.DS_Store
