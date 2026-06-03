@@ -40,6 +40,21 @@ STAGE = {"I": ("I", 8, "J"), "K": ("K", 10, "L"), "M": ("M", 12, "N"),
 # (not scheduled) = table absent from recon_schedule; Ready = SKIPPED-only verdict.
 SKIP_VALUES = {"(not scheduled)", "Ready"}
 
+# compact-encoding (fmt=c1) inverse maps — see check_table_status_prod_v1.py
+RVMAP = {"D": "Done", "N": "Not started", "A": "N/A", "R": "Ready",
+         "S": "(not scheduled)", "X": "Discrepancies", "E": "Error", "_": ""}
+RTMAP = {"c": "cdc", "l": "lookup", "i": "inter", "o": ""}
+
+
+def decode_line(ln, order):
+    """'23:DDDDR:c:0:1' -> {r, prop{K..S}, t, cdc_detected, gap}."""
+    parts = ln.split(":")
+    r = int(parts[0]); codes = parts[1]
+    prop = {order[i]: RVMAP.get(codes[i], "") for i in range(min(len(order), len(codes)))}
+    return {"r": r, "t": RTMAP.get(parts[2] if len(parts) > 2 else "", ""),
+            "prop": prop, "cdc_detected": len(parts) > 3 and parts[3] == "1",
+            "gap": "NO_TABLE_GP" if (len(parts) > 4 and parts[4] == "1") else None}
+
 
 def find_latest_result(explicit=None, require_stage=None):
     """Scan capture JSONL files for the newest line carrying a RESULTS_JSON.
@@ -74,12 +89,27 @@ def find_latest_result(explicit=None, require_stage=None):
     # latest run = the utc whose newest chunk has the max capture time
     run = max(by_run, key=lambda u: max(t for t, _ in by_run[u].values()))
     chunks = by_run[run]
-    merged = {}                       # dedupe rows by sheet-row number
-    for ck in sorted(chunks):
-        for row in chunks[ck][1].get("rows", []):
-            merged[row["r"]] = row
     base = dict(next(iter(chunks.values()))[1])
-    base["rows"] = list(merged.values())
+    if base.get("fmt") == "c1":       # compact encoding -> decode lines
+        order = base.get("stage_order", "KMOQS")
+        lines = {}
+        for ck in sorted(chunks):
+            for ln in (chunks[ck][1].get("rows_str") or "").split("\n"):
+                ln = ln.strip()
+                if ln:
+                    try:
+                        lines[int(ln.split(":", 1)[0])] = ln
+                    except Exception:
+                        pass
+        base["rows"] = [decode_line(ln, order) for ln in lines.values()]
+        base["stage_cols"] = {"K": "DBZ->RMQ", "M": "Create GP table",
+                              "O": "IPC init load", "Q": "RMQ->GPSS", "S": "Data recon"}
+    else:                             # verbose rows -> dedupe by sheet-row number
+        merged = {}
+        for ck in sorted(chunks):
+            for row in chunks[ck][1].get("rows", []):
+                merged[row["r"]] = row
+        base["rows"] = list(merged.values())
     expected = base.get("chunks", 1)
     if len(chunks) < expected:
         print(f"WARNING: only {len(chunks)}/{expected} chunks captured for run {run} "
@@ -186,7 +216,7 @@ def main():
             elif cv == "done" and pv == "no":
                 buckets[x]["sheet=Done,GP=no"] += 1
                 if len(conflicts[x]) < 12:
-                    conflicts[x].append(f"{res['e']}.{res['f']} (sheet={cur_cell(r, idx)!r})")
+                    conflicts[x].append(f"{cur_cell(r, 4)}.{cur_cell(r, 5)} (sheet={cur_cell(r, idx)!r})")
             elif cv == "no" and pv == "done":
                 buckets[x]["GP=Done,sheet=no"] += 1
             else:
@@ -272,7 +302,11 @@ def main():
             state = {}
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     for res in rows:
-        key = f"{(res['e'] or '').lower()}.{(res['f'] or '').lower()}"
+        r = res["r"]
+        # e/f from the result if present (prereq probes), else from the sheet (compact GP)
+        e = (res.get("e") or cur_cell(r, 4)).lower()
+        f = (res.get("f") or cur_cell(r, 5)).lower()
+        key = f"{e}.{f}"
         entry = state.get(key, {"row": res["r"], "prop": {}})
         entry["row"] = res["r"]
         entry.setdefault("prop", {}).update(res["prop"])   # merge GP + prereq stages

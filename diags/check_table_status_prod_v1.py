@@ -91,34 +91,56 @@ def post_card(title, body, url):
         return resp.status, str(resp.status)
 
 
-CHUNK_ROWS = 100   # ~12 KB JSON/chunk, well under the 20 KB card cap
+# Compact encoding: one short line per row instead of a JSON object, so the
+# whole 1209-row run fits in 1-2 cards (rapid many-card posts don't capture
+# reliably). e/f are NOT sent — the Mac writer reads them from the sheet by row.
+VMAP = {"Done": "D", "Not started": "N", "N/A": "A", "Ready": "R",
+        "(not scheduled)": "S", "Discrepancies": "X", "Error": "E", "": "_"}
+TMAP = {"cdc": "c", "lookup": "l", "inter": "i"}
+STAGE_ORDER = "KMOQS"
+CHUNK_BYTES = 13000
+CHUNK_DELAY = 4        # seconds between cards so the capture extension keeps up
 
 
-def self_post_chunks(results, stage_cols, skipped, utc, webhook):
-    """Self-POST the result to 'table status' in [k/N] chunks the Mac writer
-    reassembles by utc. Returns #chunks posted, or None if webhook absent."""
+def encode_row(res):
+    p = res["prop"]
+    codes = "".join(VMAP.get(p.get(x, ""), "_") for x in STAGE_ORDER)
+    return (f'{res["r"]}:{codes}:{TMAP.get(res.get("t"), "o")}:'
+            f'{1 if res.get("cdc_detected") else 0}:{1 if res.get("gap") else 0}')
+
+
+def self_post_chunks(results, skipped, utc, webhook):
+    """Self-POST the compact result to 'table status' in [k/N] cards the Mac
+    writer reassembles by utc. Returns #chunks posted, or None if no webhook."""
     if not webhook.startswith("http"):
         return None
-    n = max(1, (len(results) + CHUNK_ROWS - 1) // CHUNK_ROWS)
-    posted = 0
-    for k in range(n):
-        sub = results[k * CHUNK_ROWS:(k + 1) * CHUNK_ROWS]
-        payload = json.dumps({"utc": utc, "stage_cols": stage_cols, "chunk": k + 1,
-                              "chunks": n, "skipped_canceled": skipped, "rows": sub},
-                             ensure_ascii=False, separators=(",", ":"))
-        body = f"chunk {k+1}/{n} rows={len(sub)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
+    lines = [encode_row(r) for r in results]
+    chunks, cur, cur_len = [], [], 0
+    for ln in lines:
+        if cur and cur_len + len(ln) + 1 > CHUNK_BYTES:
+            chunks.append(cur); cur, cur_len = [], 0
+        cur.append(ln); cur_len += len(ln) + 1
+    if cur:
+        chunks.append(cur)
+    n = len(chunks); posted = 0
+    for k, grp in enumerate(chunks, 1):
+        payload = json.dumps({"utc": utc, "fmt": "c1", "stage_order": STAGE_ORDER,
+                              "skipped_canceled": skipped, "chunk": k, "chunks": n,
+                              "rows_str": "\n".join(grp)}, ensure_ascii=False, separators=(",", ":"))
+        body = f"chunk {k}/{n} rows={len(grp)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
         ok = False
-        for attempt in (1, 2):   # retry once
+        for attempt in (1, 2):
             try:
-                st, resp = post_card(f"📋 table-status check [{k+1}/{n}] · {utc}", body, webhook)
+                st, resp = post_card(f"📋 table-status check [{k}/{n}] · {utc}", body, webhook)
                 if st == 200:
                     ok = True; break
-                print(f"[selfpost {k+1}/{n} try{attempt}] status={st} {resp}")
+                print(f"[selfpost {k}/{n} try{attempt}] status={st} {resp}")
             except Exception as ex:
-                print(f"[selfpost {k+1}/{n} try{attempt}] {type(ex).__name__}: {ex}")
+                print(f"[selfpost {k}/{n} try{attempt}] {type(ex).__name__}: {ex}")
         if ok:
-            posted += 1
-            print(f"[selfpost {k+1}/{n}] OK rows={len(sub)}")
+            posted += 1; print(f"[selfpost {k}/{n}] OK rows={len(grp)}")
+        if k < n:
+            time.sleep(CHUNK_DELAY)
     return posted if posted else None
 
 
@@ -218,12 +240,13 @@ def main():
     # Full RESULTS_JSON goes ONLY to 'table status', CHUNKED into [k/N] cards
     # so a big run (1231 rows >> 20KB) fits; the Mac writer reassembles by utc.
     # stdout carries the JSON only as a FALLBACK when self-post is unavailable.
-    posted = self_post_chunks(results, STAGE_COL, skipped, utc, WEBHOOK)
-    if posted is None:   # webhook missing / all posts failed -> stdout fallback
-        payload = json.dumps({"utc": utc, "stage_cols": STAGE_COL, "chunk": 1,
-                              "chunks": 1, "skipped_canceled": skipped, "rows": results},
+    posted = self_post_chunks(results, skipped, utc, WEBHOOK)
+    if posted is None:   # webhook missing / all posts failed -> stdout fallback (compact fits)
+        payload = json.dumps({"utc": utc, "fmt": "c1", "stage_order": STAGE_ORDER,
+                              "chunk": 1, "chunks": 1, "skipped_canceled": skipped,
+                              "rows_str": "\n".join(encode_row(r) for r in results)},
                              ensure_ascii=False, separators=(",", ":"))
-        print("[fallback] emitting RESULTS_JSON to stdout:")
+        print("[fallback] emitting compact RESULTS_JSON to stdout:")
         print(MARK_BEGIN); print(payload); print(MARK_END)
     print("\n=== prod v1 done (NO sheet writes) ===")
     return 0
