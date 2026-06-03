@@ -69,9 +69,20 @@ PASS→`Done`, DIFF→`Discrepancies`, ERROR→`Blocked`, not in schedule →
   → resolve strictly by col E (ci); send everything unresolved to the
   **gap mini-report** for the user to map. Do not auto-apply guessed aliases.
 - **recon_meta** (`recon_results` keyed by schedule_id → `recon_schedule.id`;
-  `gp_table` = lowercase `schema.table`; verdicts PASS/DIFF/ERROR/SKIPPED).
-  recon_schedule currently holds only ~55 DP09/benchmark tables → auto recon
-  status only for those.
+  `gp_table` = lowercase `schema.table`; per-test_type verdicts
+  PASS/DIFF/ERROR/SKIPPED, plus `details` JSON + human `comment`). The
+  autotester (`run_auto_recon.py`) INSERTs every verdict here; the Teams
+  recon card is just a downstream render — so **read recon status from GP,
+  never scrape messages.** recon_results is also RICHER than the card
+  (details/comment → can feed the sheet's Discrepancies/Comment).
+  **Policy (user 2026-06-03):** Data reconciliation is ALWAYS GP-sourced and
+  overwritten; manual recon (Haneen's) is legacy and not preserved — the
+  goal is full auto-recon, and any future manual recon writes to the same
+  store. recon_schedule currently holds only ~55 tables; CDC tables not yet
+  scheduled → `(not scheduled)` (a temporary to-do surfaced in the gap
+  report, not a gap to engineer around).
+  CARE: the sheet's Comment (V) carries notes for ALL stages, so don't
+  blanket-overwrite it with recon-only `comment` — enrich carefully.
 - **SOURCE_PROFILES = 9** (8 mssql + 1 db2i; `mssql_default` is CHANGEME).
   MSSQL CDC-on via `sys.databases.is_cdc_enabled` + `sys.tables.is_tracked_by_cdc`;
   access via `HAS_PERMS_BY_NAME`. DB2i journaling via `QSYS2.OBJECT_STATISTICS`.
