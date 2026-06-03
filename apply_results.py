@@ -129,6 +129,73 @@ def doneness(v):
 UPSTREAM = [("I", 8), ("K", 10), ("M", 12), ("O", 14), ("Q", 16)]  # for cdc Ready rule
 
 
+def make_report(apply):
+    """Write an 'Auto-check report' tab from the latest GP result: a summary
+    + the actionable SHEET_AHEAD findings (sheet=Done but GP says not)."""
+    found = find_latest_result(require_stage="M")
+    if not found:
+        print("report: no GP result"); return
+    _, payload = found
+    gc = gspread.service_account(filename=CREDENTIALS)
+    ss = gc.open_by_key(SPREADSHEET_ID)
+    # baseline = the most recent BAK snapshot (the pre-apply 'before' state),
+    # so findings survive even though the live sheet is already overwritten.
+    baks = sorted((w.title for w in ss.worksheets() if w.title.startswith("BAK ")), reverse=True)
+    base_tab = baks[0] if baks else SHEET
+    print(f"report baseline tab: {base_tab!r}")
+    vals = ss.worksheet(base_tab).get_all_values()
+    live = ss.worksheet(SHEET).get_all_values()
+
+    def cell(r, idx):
+        row = vals[r - 1] if r - 1 < len(vals) else []
+        return row[idx].strip() if idx < len(row) else ""
+
+    def lcell(r, idx):
+        row = live[r - 1] if r - 1 < len(live) else []
+        return row[idx].strip() if idx < len(row) else ""
+
+    from collections import Counter
+    cats = Counter(); findings = []
+    for res in payload.get("rows", []):
+        r, prop, t = res["r"], res["prop"], (res.get("t") or "")
+        if res.get("gap"):
+            cats["NO_TABLE_GP"] += 1
+        for x, (sl, idx, rl) in STAGE.items():
+            p = prop.get(x, "")
+            if not p or p == "N/A" or p in SKIP_VALUES:
+                continue
+            cv = cell(r, idx)
+            if doneness(cv) == "done" and doneness(p) == "no":
+                cats["SHEET_AHEAD"] += 1
+                findings.append([f"{cell(r,4)}.{cell(r,5)}", t, STAGE_COLS_NAME.get(x, x), cv, p])
+            elif doneness(cv) == "no" and doneness(p) == "done":
+                cats["GP_AHEAD"] += 1
+
+    stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    out = [["Auto-check report", stamp],
+           ["rows checked", str(len(payload.get("rows", [])))],
+           ["SHEET_AHEAD (sheet=Done but GP=no — investigate)", str(cats["SHEET_AHEAD"])],
+           ["GP_AHEAD (GP=Done, sheet was behind — auto-corrected)", str(cats["GP_AHEAD"])],
+           ["NO_TABLE_GP (not created in GP — backlog)", str(cats["NO_TABLE_GP"])],
+           [], ["table", "type", "stage", "sheet", "GP (autotester)"]]
+    out += findings
+    if not apply:
+        print(f"report (dry): SHEET_AHEAD={cats['SHEET_AHEAD']} GP_AHEAD={cats['GP_AHEAD']} "
+              f"NO_TABLE_GP={cats['NO_TABLE_GP']}; {len(findings)} finding rows (pass --apply to write the tab)")
+        return
+    title = "Auto-check report"
+    try:
+        rep = ss.worksheet(title); rep.clear()
+    except Exception:
+        rep = ss.add_worksheet(title=title, rows=max(50, len(out) + 5), cols=6)
+    rep.update(out, value_input_option="USER_ENTERED")
+    print(f"report: wrote {len(findings)} findings to tab {title!r}")
+
+
+STAGE_COLS_NAME = {"I": "Prerequisites", "K": "DBZ->RMQ", "M": "Create GP table",
+                   "O": "IPC init load", "Q": "RMQ->GPSS", "S": "Data recon"}
+
+
 def finalize_recon(apply):
     """Rule: a cdc row whose upstream I/K/M/O/Q are all Done but has no real
     recon verdict (PASS/DIFF/ERROR) gets Data recon = 'Ready' (= pipeline
@@ -170,10 +237,14 @@ def main():
     ap.add_argument("--finalize-recon", dest="finalize", action="store_true",
                     help="apply the cdc 'Ready' rule and exit")
     ap.add_argument("--require", help="only accept a result whose stage_cols has this key (M=GP probe, I=prereq)")
+    ap.add_argument("--report", action="store_true", help="write the Auto-check report tab and exit")
     args = ap.parse_args()
 
     if args.finalize:
         finalize_recon(args.apply)
+        return
+    if args.report:
+        make_report(args.apply)
         return
 
     found = find_latest_result(args.src, require_stage=args.require)
