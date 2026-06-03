@@ -78,8 +78,11 @@ def find_latest_result(explicit=None, require_stage=None):
                 seg = text.split(MARK_BEGIN, 1)[1].split(MARK_END, 1)[0].strip()
                 seg = html.unescape(seg)   # capture HTML-escapes > as &gt; etc.
                 payload = json.loads(seg)
-                if require_stage and require_stage not in (payload.get("stage_cols") or {}):
-                    continue
+                if require_stage:
+                    sc = payload.get("stage_cols") or {}
+                    so = payload.get("stage_order") or ""   # compact (fmt=c1) GP probe
+                    if require_stage not in sc and require_stage not in so:
+                        continue
                 t = msg.get("time", "") or ""
                 by_run[payload.get("utc", "")][payload.get("chunk", 1)] = (t, payload)
             except Exception:
