@@ -49,7 +49,8 @@ def find_latest_result(explicit=None, require_stage=None):
         os.path.join(WATCHER_DATA, "table_status.jsonl"),
         os.path.join(WATCHER_DATA, "tech_channel.jsonl"),
     ]
-    best = None  # (time_str, payload_dict)
+    from collections import defaultdict
+    by_run = defaultdict(dict)   # run utc -> {chunk_no: (time, payload)}
     for fp in files:
         if not fp or not os.path.isfile(fp):
             continue
@@ -65,11 +66,26 @@ def find_latest_result(explicit=None, require_stage=None):
                 if require_stage and require_stage not in (payload.get("stage_cols") or {}):
                     continue
                 t = msg.get("time", "") or ""
-                if best is None or t >= best[0]:
-                    best = (t, payload)
+                by_run[payload.get("utc", "")][payload.get("chunk", 1)] = (t, payload)
             except Exception:
                 continue
-    return best
+    if not by_run:
+        return None
+    # latest run = the utc whose newest chunk has the max capture time
+    run = max(by_run, key=lambda u: max(t for t, _ in by_run[u].values()))
+    chunks = by_run[run]
+    merged = {}                       # dedupe rows by sheet-row number
+    for ck in sorted(chunks):
+        for row in chunks[ck][1].get("rows", []):
+            merged[row["r"]] = row
+    base = dict(next(iter(chunks.values()))[1])
+    base["rows"] = list(merged.values())
+    expected = base.get("chunks", 1)
+    if len(chunks) < expected:
+        print(f"WARNING: only {len(chunks)}/{expected} chunks captured for run {run} "
+              f"— result is INCOMPLETE, do not --apply")
+    latest_t = max(t for t, _ in chunks.values())
+    return (latest_t, base)
 
 
 def doneness(v):

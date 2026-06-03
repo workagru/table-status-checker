@@ -32,7 +32,11 @@ GP = dict(host="grnplumvipuat.ksacb.com.sa", port=5442, dbname="simah_test",
           user="gpadmin", password="gpadmin", connect_timeout=15)
 
 WORKLIST_B64 = "__WORKLIST_B64__"
-ALIAS_MAP = {}            # {sheet_schema_lower: real_gp_schema_lower}
+ALIAS_MAP_JSON = "__ALIAS_MAP_JSON__"   # injected from schema_aliases.json; {} if absent
+try:
+    ALIAS_MAP = json.loads(ALIAS_MAP_JSON)   # {sheet_schema_lower: real_gp_schema_lower}
+except Exception:
+    ALIAS_MAP = {}
 WEBHOOK = "__WEBHOOK__"   # self-post target; guard checks startswith('http')
 
 # stage -> sheet column letter (writer maps letter -> column index)
@@ -85,6 +89,37 @@ def post_card(title, body, url):
                                  method="POST")
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.status, str(resp.status)
+
+
+CHUNK_ROWS = 100   # ~12 KB JSON/chunk, well under the 20 KB card cap
+
+
+def self_post_chunks(results, stage_cols, skipped, utc, webhook):
+    """Self-POST the result to 'table status' in [k/N] chunks the Mac writer
+    reassembles by utc. Returns #chunks posted, or None if webhook absent."""
+    if not webhook.startswith("http"):
+        return None
+    n = max(1, (len(results) + CHUNK_ROWS - 1) // CHUNK_ROWS)
+    posted = 0
+    for k in range(n):
+        sub = results[k * CHUNK_ROWS:(k + 1) * CHUNK_ROWS]
+        payload = json.dumps({"utc": utc, "stage_cols": stage_cols, "chunk": k + 1,
+                              "chunks": n, "skipped_canceled": skipped, "rows": sub},
+                             ensure_ascii=False, separators=(",", ":"))
+        body = f"chunk {k+1}/{n} rows={len(sub)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
+        ok = False
+        for attempt in (1, 2):   # retry once
+            try:
+                st, resp = post_card(f"📋 table-status check [{k+1}/{n}] · {utc}", body, webhook)
+                if st == 200:
+                    ok = True; break
+                print(f"[selfpost {k+1}/{n} try{attempt}] status={st} {resp}")
+            except Exception as ex:
+                print(f"[selfpost {k+1}/{n} try{attempt}] {type(ex).__name__}: {ex}")
+        if ok:
+            posted += 1
+            print(f"[selfpost {k+1}/{n}] OK rows={len(sub)}")
+    return posted if posted else None
 
 
 def main():
@@ -176,31 +211,19 @@ def main():
         results.append({"r": r["r"], "e": e, "f": f, "t": t, "prop": prop,
                         "gap": gap, "cdc_detected": cdc_detected})
 
-    payload = json.dumps({"utc": utc, "stage_cols": STAGE_COL,
-                          "skipped_canceled": skipped, "rows": results},
-                         ensure_ascii=False, separators=(",", ":"))
-
-    # stdout = short human summary only (no JSON — it lives in 'table status').
+    # stdout = short human summary only (the JSON lives in 'table status').
     print(f"computed {len(results)} rows (skipped Canceled {skipped})")
     print("value distribution:", dict(dist.most_common()))
 
-    # The full RESULTS_JSON goes ONLY to the dedicated 'table status' channel
-    # via self-post. stdout (-> tech channel) carries the JSON only as a
-    # FALLBACK when the self-post fails, so we never lose the data.
-    posted_ok = False
-    if WEBHOOK.startswith("http"):
-        body = f"rows={len(results)} skippedCanceled={skipped} values={dict(dist.most_common())}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
-        if len(body) <= 17000:
-            try:
-                st, resp = post_card(f"📋 table-status check · {utc}", body, WEBHOOK)
-                posted_ok = (st == 200)
-                print(f"[selfpost] status={st} {resp}")
-            except Exception as ex:
-                print(f"[selfpost] FAILED: {type(ex).__name__}: {ex}")
-        else:
-            print(f"[selfpost] payload {len(payload)}B > card cap — using stdout fallback")
-    if not posted_ok:
-        print("[fallback] emitting RESULTS_JSON to stdout (self-post unavailable):")
+    # Full RESULTS_JSON goes ONLY to 'table status', CHUNKED into [k/N] cards
+    # so a big run (1231 rows >> 20KB) fits; the Mac writer reassembles by utc.
+    # stdout carries the JSON only as a FALLBACK when self-post is unavailable.
+    posted = self_post_chunks(results, STAGE_COL, skipped, utc, WEBHOOK)
+    if posted is None:   # webhook missing / all posts failed -> stdout fallback
+        payload = json.dumps({"utc": utc, "stage_cols": STAGE_COL, "chunk": 1,
+                              "chunks": 1, "skipped_canceled": skipped, "rows": results},
+                             ensure_ascii=False, separators=(",", ":"))
+        print("[fallback] emitting RESULTS_JSON to stdout:")
         print(MARK_BEGIN); print(payload); print(MARK_END)
     print("\n=== prod v1 done (NO sheet writes) ===")
     return 0

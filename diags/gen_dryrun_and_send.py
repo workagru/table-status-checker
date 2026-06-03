@@ -111,6 +111,13 @@ def main():
         filled = filled.replace('"__WEBHOOK__"', json.dumps(wh))
         print("injected table_status webhook")
 
+    # 3) inject schema aliases (only if the probe expects them)
+    if '"__ALIAS_MAP_JSON__"' in filled:
+        ap = os.path.join(REPO_ROOT, "schema_aliases.json")
+        aliases = json.load(open(ap)) if os.path.isfile(ap) else {}
+        filled = filled.replace('"__ALIAS_MAP_JSON__"', json.dumps(json.dumps(aliases)))
+        print(f"injected {len(aliases)} schema aliases")
+
     out = f"/tmp/{SUBJECT}_filled.py"
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(filled)
