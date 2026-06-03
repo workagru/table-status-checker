@@ -129,6 +129,10 @@ own writes via the "value we last wrote" field in the store.
 - Recon write: only a real verdict (PASS→Done, DIFF→Discrepancies,
   ERROR→Error) is written directly; `(not scheduled)` / SKIPPED-only are
   never written (the Ready rule covers the all-upstream-Done case).
+- **Non-cdc rule:** for a `lookup`/`inter` row, an old `Done` the autotester
+  does NOT confirm (proposed != Done) is written as **`Not started`** (not
+  N/A). Confirmed `Done` stays. (cdc's analog is the `Ready` rule above.)
+  Applies on the full run; the all-cdc B7031210 pilot is unaffected.
 - **Pilot first:** before the full 1231-row run, do a scoped run on ONE
   source DB — **B7031210** (the DB2i CORE source → lz_psa_core/lz_stream_core)
   — verify, then go wide.

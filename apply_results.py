@@ -201,15 +201,20 @@ def main():
         except Exception as e:
             print(f"[backup] FAILED ({e}) — aborting write to stay safe"); return
 
-    # ---- build batch update (status = proposed, responsible = 'auto') ----
+    # ---- build batch update (status columns only; Responsible never touched) ----
     updates = []
     changed = 0
     for res in rows:
         r, prop = res["r"], res["prop"]
+        t = (res.get("t") or "").strip().lower()
         for x, (sl, idx, rl) in STAGE.items():
             p = prop.get(x, "")
             if not p or p in SKIP_VALUES:   # no concrete result -> leave the cell
                 continue
+            # Non-cdc rule (user 2026-06-03): an old 'Done' the autotester does
+            # NOT confirm (proposed != Done) becomes 'Not started', not N/A.
+            if t != "cdc" and p != "Done" and cur_cell(r, idx).strip().lower() == "done":
+                p = "Not started"
             updates.append({"range": f"{sl}{r}", "values": [[p]]})  # status only; never touch Responsible
             changed += 1
     if updates:
@@ -227,9 +232,13 @@ def main():
             state = {}
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     for res in rows:
-        key = f"{res['e']}.{res['f']}"
-        state[key] = {"row": res["r"], "prop": res["prop"], "checked_at": now,
-                      "written": res["prop"]}
+        key = f"{(res['e'] or '').lower()}.{(res['f'] or '').lower()}"
+        entry = state.get(key, {"row": res["r"], "prop": {}})
+        entry["row"] = res["r"]
+        entry.setdefault("prop", {}).update(res["prop"])   # merge GP + prereq stages
+        entry["checked_at"] = now
+        entry["written"] = dict(entry["prop"])
+        state[key] = entry
     json.dump(state, open(state_path, "w"), indent=0)
     print(f"[state] updated {len(rows)} keys -> {state_path}")
 
