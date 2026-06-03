@@ -133,6 +133,11 @@ own writes via the "value we last wrote" field in the store.
   does NOT confirm (proposed != Done) is written as **`Not started`** (not
   N/A). Confirmed `Done` stays. (cdc's analog is the `Ready` rule above.)
   Applies on the full run; the all-cdc B7031210 pilot is unaffected.
+- **Mislabeled-CDC note:** a `lookup`/`inter` row with >3 of its 6 statuses
+  filled AND a populated `lz_stream_*` table in GP is really CDC → the writer
+  appends to the Comment (col V): **`ключ lookup а реализовано CDC`** (or
+  `inter`). The probe sets `cdc_detected` from the stream table; the writer
+  applies the >3-filled + note-merge (won't duplicate an existing note).
 - **Pilot first:** before the full 1231-row run, do a scoped run on ONE
   source DB — **B7031210** (the DB2i CORE source → lz_psa_core/lz_stream_core)
   — verify, then go wide.

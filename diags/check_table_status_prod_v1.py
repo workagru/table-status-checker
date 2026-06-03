@@ -161,16 +161,20 @@ def main():
             prop["O"] = "Done" if (pexists and prows > 0) else ("Not started" if pexists else NA)
         else:
             prop["O"] = "Done" if (pexists and prows > 0) else "Not started"
+        cdc_detected = False
         if t == "cdc":
             sv = "Done" if (sexists and srows > 0) else "Not started"
             prop["K"] = sv; prop["Q"] = sv
             prop["S"] = recon.get(gp_table, "(not scheduled)")
         else:
             prop["K"] = prop["Q"] = prop["S"] = NA
+            # mislabeled-CDC signal: a lookup/inter row with a populated stream table
+            cdc_detected = bool(sexists and srows > 0)
         gap = None if (pexists or resolved) else ("NO_TABLE_GP/unresolved_schema" if not resolved else "NO_TABLE_GP")
         for v in prop.values():
             dist[v] += 1
-        results.append({"r": r["r"], "e": e, "f": f, "t": t, "prop": prop, "gap": gap})
+        results.append({"r": r["r"], "e": e, "f": f, "t": t, "prop": prop,
+                        "gap": gap, "cdc_detected": cdc_detected})
 
     payload = json.dumps({"utc": utc, "stage_cols": STAGE_COL,
                           "skipped_canceled": skipped, "rows": results},

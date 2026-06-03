@@ -217,9 +217,32 @@ def main():
                 p = "Not started"
             updates.append({"range": f"{sl}{r}", "values": [[p]]})  # status only; never touch Responsible
             changed += 1
+
+    # ---- lookup/inter mislabeled-CDC note (user 2026-06-03) ----
+    # A lookup/inter row with >3 of its 6 statuses filled AND a populated
+    # stream table in GP is really CDC -> add a Comment (col V, idx 21) note.
+    STATUS_IDX = [8, 10, 12, 14, 16, 18]
+    flagged = 0
+    for res in rows:
+        t = (res.get("t") or "").strip().lower()
+        if t not in ("lookup", "inter") or not res.get("cdc_detected"):
+            continue
+        r = res["r"]
+        nfilled = sum(1 for idx in STATUS_IDX if cur_cell(r, idx).strip())
+        if nfilled <= 3:
+            continue
+        note = f"ключ {t} а реализовано CDC"
+        comment = cur_cell(r, 21)
+        if note.lower() in comment.lower():
+            continue
+        new_comment = f"{comment} | {note}".strip(" |") if comment else note
+        updates.append({"range": f"V{r}", "values": [[new_comment]]})
+        flagged += 1
+
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
-    print(f"[write] applied {len(updates)} status cells across {len(rows)} rows")
+    print(f"[write] applied {len(updates)} cells across {len(rows)} rows "
+          f"({flagged} lookup/inter mislabeled-CDC notes)")
 
     # ---- state + report ----
     os.makedirs(STATE_DIR, exist_ok=True)
