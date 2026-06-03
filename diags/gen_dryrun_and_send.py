@@ -39,8 +39,25 @@ REPO_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 GMAIL_SEND = os.path.join(REPO_ROOT, "gmail_send.py")  # repo-local (gitignored, has app pw)
 
 # 0-based column indices in the sheet
-C_E, C_F, C_TYPE = 4, 5, 7
+C_DB, C_E, C_F, C_TYPE = 2, 4, 5, 7   # Source Database Name, GP schema, table, type
 STAGE_COLS = [8, 10, 12, 14, 16, 18]   # I,K,M,O,Q,S
+
+# optional argv[3] scope filter, e.g. "db=B7031210" or "type=cdc"
+SCOPE = sys.argv[3] if len(sys.argv) > 3 else ""
+
+
+def _in_scope(cell):
+    if not SCOPE or "=" not in SCOPE:
+        return True
+    key, val = SCOPE.split("=", 1)
+    key, val = key.strip().lower(), val.strip().lower()
+    if key == "db":
+        return cell(C_DB).lower() == val
+    if key == "type":
+        return cell(C_TYPE).lower() == val
+    if key == "schema":
+        return cell(C_E).lower() == val
+    return True
 
 
 def build_worklist():
@@ -51,6 +68,8 @@ def build_worklist():
     for i, row in enumerate(vals[1:], start=2):   # data starts at sheet row 2
         def cell(idx):
             return row[idx].strip() if idx < len(row) else ""
+        if not _in_scope(cell):
+            continue
         e, f, t = cell(C_E), cell(C_F), cell(C_TYPE)
         if not (e or f):
             continue

@@ -5,6 +5,8 @@ gmail_send.py
 *.json
 service-account*.json
 secrets.*
+# but DO track the cross-run state store (the solution's memory)
+!state/table_status_state.json
 
 # generated / transient
 # *_filled.py = probe with the work-list baked in (built by the generator)
