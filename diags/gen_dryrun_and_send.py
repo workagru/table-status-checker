@@ -22,7 +22,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # probe template + email subject can be overridden by argv (default v1)
 PROBE = sys.argv[1] if len(sys.argv) > 1 else "check_table_status_dryrun_v2.py"
 SUBJECT = sys.argv[2] if len(sys.argv) > 2 else os.path.splitext(os.path.basename(PROBE))[0]
-TEMPLATE = PROBE if os.path.isabs(PROBE) else os.path.join(HERE, PROBE)
+
+
+def _resolve(p):
+    cands = ([p] if os.path.isabs(p) else
+             [os.path.join(os.getcwd(), p), os.path.join(HERE, p),
+              os.path.join(HERE, os.path.basename(p))])
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    sys.exit(f"probe template not found: {p}")
+
+
+TEMPLATE = _resolve(PROBE)
 REPO_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 GMAIL_SEND = os.path.join(REPO_ROOT, "gmail_send.py")  # repo-local (gitignored, has app pw)
 
@@ -47,20 +59,36 @@ def build_worklist():
     return work
 
 
+def load_secret(key):
+    path = os.path.join(REPO_ROOT, "secrets.local.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh).get(key)
+
+
 def main():
-    work = build_worklist()
-    print(f"worklist rows: {len(work)}")
-    from collections import Counter
-    print("by type:", dict(Counter((w["t"] or "?").lower() for w in work)))
-
-    payload = base64.b64encode(json.dumps(work, ensure_ascii=False).encode("utf-8")).decode("ascii")
-    print(f"payload: {len(payload)} b64 chars (~{len(payload)//1024} KB)")
-
     with open(TEMPLATE, encoding="utf-8") as fh:
         src = fh.read()
-    if '"__WORKLIST_B64__"' not in src:
-        sys.exit("placeholder not found in template")
-    filled = src.replace('"__WORKLIST_B64__"', json.dumps(payload))
+    filled = src
+
+    # 1) embed the sheet work-list (only if the probe expects it)
+    if '"__WORKLIST_B64__"' in filled:
+        work = build_worklist()
+        from collections import Counter
+        print(f"worklist rows: {len(work)}  by type:",
+              dict(Counter((w["t"] or "?").lower() for w in work)))
+        payload = base64.b64encode(json.dumps(work, ensure_ascii=False).encode("utf-8")).decode("ascii")
+        print(f"payload: {len(payload)} b64 chars (~{len(payload)//1024} KB)")
+        filled = filled.replace('"__WORKLIST_B64__"', json.dumps(payload))
+
+    # 2) inject the table-status webhook (only if the probe self-posts)
+    if '"__WEBHOOK__"' in filled:
+        wh = load_secret("table_status_webhook")
+        if not wh:
+            sys.exit("probe needs a webhook but secrets.local.json/table_status_webhook is missing")
+        filled = filled.replace('"__WEBHOOK__"', json.dumps(wh))
+        print("injected table_status webhook")
 
     out = f"/tmp/{SUBJECT}_filled.py"
     with open(out, "w", encoding="utf-8") as fh:

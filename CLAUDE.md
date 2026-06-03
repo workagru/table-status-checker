@@ -84,6 +84,27 @@ Auto-Recon `error_classifier` taxonomy). For un-checkable rows we leave the
 manual status untouched; the user feeds creds/access/schema-mappings
 incrementally.
 
+## Stateful re-check engine (planned — user spec 2026-06-03)
+**First run trusts NOTHING** in the sheet: every stage is computed fresh
+from GP/source. Subsequent runs keep a persistent per-(row, stage) state
+(last verified result + timestamp + the value we last wrote to the sheet)
+in a **Mac-side store** `state/table_status_state.json`, and re-check
+selectively:
+- **Data reconciliation: ALWAYS re-checked** (data drifts) — re-read fresh
+  from `recon_meta.recon_results` each run.
+- A stage is **SKIPPED** (reuse stored result) **only when** stored result
+  == Done/OK **and** the current sheet value == Done/OK (stable, confirmed).
+  This is the *only* skip case.
+- Otherwise re-check — in particular:
+  - stored=not-OK but sheet now manually says OK (human claims progress) → check;
+  - stored=OK but sheet now says not-OK → check (symmetric);
+  - stored=not-OK and sheet=not-OK (table still missing) → check (poll until created).
+
+Effect: steady-state runs only re-probe in-progress rows, freshly
+human-edited rows, and recon → a tiny work-list and a tiny result (also
+helps stay under the Teams 20 KB cap). Human edits are told apart from our
+own writes via the "value we last wrote" field in the store.
+
 ## How to run
 ```bash
 # build a probe with the sheet work-list embedded + email it to the VDI
