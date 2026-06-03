@@ -120,13 +120,14 @@ def main():
     ap.add_argument("--from", dest="src", help="explicit jsonl path to read the result from")
     ap.add_argument("--finalize-recon", dest="finalize", action="store_true",
                     help="apply the cdc 'Ready' rule and exit")
+    ap.add_argument("--require", help="only accept a result whose stage_cols has this key (M=GP probe, I=prereq)")
     args = ap.parse_args()
 
     if args.finalize:
         finalize_recon(args.apply)
         return
 
-    found = find_latest_result(args.src)
+    found = find_latest_result(args.src, require_stage=args.require)
     if not found:
         print("No RESULTS_JSON captured yet (is the result card in table_status.jsonl / tech_channel.jsonl?)")
         return
