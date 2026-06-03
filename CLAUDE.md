@@ -101,6 +101,10 @@ cd ../teams-channel-watcher && python3 get_messages.py --channel "tech channel" 
 - **3-minute timeout**: if a tool hangs >3 min, abort and switch approach.
 - **Read-only until approved**: dry-run probes never write the sheet; the
   Mac-side writer is a separate, explicit step.
+- **Teams output is size-limited** (~20 KB — the mail-watcher truncates
+  stdout, and Adaptive Cards cap by size/line count). Never dump all 1231
+  rows: emit **delta-only** (changed rows) and **chunk** large payloads into
+  `[k/N]` cards ≤18 KB that the Mac reassembles from the channel JSONL.
 
 ## Secrets
 - `gmail_send.py` holds the Gmail app password → **gitignored**. Copy from
