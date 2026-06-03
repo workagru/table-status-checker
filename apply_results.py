@@ -41,8 +41,10 @@ STAGE = {"I": ("I", 8, "J"), "K": ("K", 10, "L"), "M": ("M", 12, "N"),
 SKIP_VALUES = {"(not scheduled)", "Ready"}
 
 
-def find_latest_result(explicit=None):
-    """Scan capture JSONL files for the newest line carrying a RESULTS_JSON."""
+def find_latest_result(explicit=None, require_stage=None):
+    """Scan capture JSONL files for the newest line carrying a RESULTS_JSON.
+    require_stage: if set, only accept results whose stage_cols contains it
+    (e.g. 'M' for the GP probe, 'I' for the prereq probe)."""
     files = [explicit] if explicit else [
         os.path.join(WATCHER_DATA, "table_status.jsonl"),
         os.path.join(WATCHER_DATA, "tech_channel.jsonl"),
@@ -60,6 +62,8 @@ def find_latest_result(explicit=None):
                 seg = text.split(MARK_BEGIN, 1)[1].split(MARK_END, 1)[0].strip()
                 seg = html.unescape(seg)   # capture HTML-escapes > as &gt; etc.
                 payload = json.loads(seg)
+                if require_stage and require_stage not in (payload.get("stage_cols") or {}):
+                    continue
                 t = msg.get("time", "") or ""
                 if best is None or t >= best[0]:
                     best = (t, payload)
@@ -73,12 +77,54 @@ def doneness(v):
     return "done" if v == "done" else "no" if v in ("", "not started") else "other"
 
 
+UPSTREAM = [("I", 8), ("K", 10), ("M", 12), ("O", 14), ("Q", 16)]  # for cdc Ready rule
+
+
+def finalize_recon(apply):
+    """Rule: a cdc row whose upstream I/K/M/O/Q are all Done but has no real
+    recon verdict (PASS/DIFF/ERROR) gets Data recon = 'Ready' (= pipeline
+    complete, awaiting reconciliation). Uses the GP probe result for the
+    'has a real verdict?' signal and the current sheet for upstream values."""
+    found = find_latest_result(require_stage="M")
+    if not found:
+        print("finalize-recon: no GP result captured"); return
+    _, payload = found
+    gp_rows = {r["r"]: r for r in payload.get("rows", [])}
+    gc = gspread.service_account(filename=CREDENTIALS)
+    ws = gc.open_by_key(SPREADSHEET_ID).worksheet(SHEET)
+    vals = ws.get_all_values()
+    updates = []
+    for rnum, res in gp_rows.items():
+        if (res.get("t") or "").lower() != "cdc":
+            continue
+        sv = res.get("prop", {}).get("S", "")
+        if sv in ("Done", "Discrepancies", "Error"):
+            continue   # real verdict already -> leave
+        row = vals[rnum - 1] if rnum - 1 < len(vals) else []
+        ok = all((row[idx].strip().lower() == "done" if idx < len(row) else False)
+                 for _, idx in UPSTREAM)
+        if ok:
+            updates.append({"range": f"S{rnum}", "values": [["Ready"]]})
+    print(f"finalize-recon: {len(updates)} cdc rows -> Data recon='Ready' (upstream all Done, no verdict)")
+    if apply and updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        print("  written.")
+    elif not apply:
+        print("  (dry — pass --apply to write)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="actually write to the sheet")
     ap.add_argument("--backup", action="store_true", help="duplicate the tab before writing")
     ap.add_argument("--from", dest="src", help="explicit jsonl path to read the result from")
+    ap.add_argument("--finalize-recon", dest="finalize", action="store_true",
+                    help="apply the cdc 'Ready' rule and exit")
     args = ap.parse_args()
+
+    if args.finalize:
+        finalize_recon(args.apply)
+        return
 
     found = find_latest_result(args.src)
     if not found:
@@ -164,12 +210,11 @@ def main():
             p = prop.get(x, "")
             if not p or p in SKIP_VALUES:   # no concrete result -> leave the cell
                 continue
-            updates.append({"range": f"{sl}{r}", "values": [[p]]})
-            if p != "N/A":
-                updates.append({"range": f"{rl}{r}", "values": [["auto"]]})
+            updates.append({"range": f"{sl}{r}", "values": [[p]]})  # status only; never touch Responsible
             changed += 1
-    ws.batch_update(updates, value_input_option="USER_ENTERED")
-    print(f"[write] applied {len(updates)} cells across {len(rows)} rows ({changed} stage values)")
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    print(f"[write] applied {len(updates)} status cells across {len(rows)} rows")
 
     # ---- state + report ----
     os.makedirs(STATE_DIR, exist_ok=True)

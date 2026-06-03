@@ -117,9 +117,18 @@ helps stay under the Teams 20 KB cap). Human edits are told apart from our
 own writes via the "value we last wrote" field in the store.
 
 ## Writer rules (user 2026-06-03)
-- When the writer sets a stage cell (I/K/M/O/Q/S), it ALSO writes **`auto`**
-  into that stage's Responsible column (J/L/N/P/R/T) — marks machine-set vs
-  human-set. Manual `Canceled` rows stay untouched (status + responsible).
+- The writer overwrites only the **status** columns (I/K/M/O/Q/S). It NEVER
+  touches the Responsible columns (J/L/N/P/R/T) — the `auto` label idea was
+  dropped per the user. Manual `Canceled` rows stay untouched.
+- **Recon 'Ready' rule:** for a `cdc` row whose upstream I/K/M/O/Q are all
+  `Done` but there is no real recon verdict (PASS/DIFF/ERROR in recon_meta),
+  set Data reconciliation (S) = **`Ready`** (pipeline complete, awaiting
+  reconciliation). This honestly replaces unverified manual `Done`.
+  Implemented as `apply_results.py --finalize-recon` (uses the GP probe
+  result for "has a verdict?" + the sheet for the upstream values).
+- Recon write: only a real verdict (PASS→Done, DIFF→Discrepancies,
+  ERROR→Error) is written directly; `(not scheduled)` / SKIPPED-only are
+  never written (the Ready rule covers the all-upstream-Done case).
 - **Pilot first:** before the full 1231-row run, do a scoped run on ONE
   source DB — **B7031210** (the DB2i CORE source → lz_psa_core/lz_stream_core)
   — verify, then go wide.
