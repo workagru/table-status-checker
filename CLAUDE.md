@@ -116,6 +116,21 @@ human-edited rows, and recon → a tiny work-list and a tiny result (also
 helps stay under the Teams 20 KB cap). Human edits are told apart from our
 own writes via the "value we last wrote" field in the store.
 
+## Writer rules (user 2026-06-03)
+- When the writer sets a stage cell (I/K/M/O/Q/S), it ALSO writes **`auto`**
+  into that stage's Responsible column (J/L/N/P/R/T) — marks machine-set vs
+  human-set. Manual `Canceled` rows stay untouched (status + responsible).
+- **Pilot first:** before the full 1231-row run, do a scoped run on ONE
+  source DB — **B7031210** (the DB2i CORE source → lz_psa_core/lz_stream_core)
+  — verify, then go wide.
+- **Backup before any overwrite:** duplicate the `2 Table Status` tab to a
+  dated snapshot tab once, before the first write.
+- **Never write fabricated/stale statuses** — only values from a real,
+  freshly-captured probe result. If capture fails, hold the write.
+- Schema aliases: auto-apply only high-confidence (dominant, unique
+  table-name overlap); leave ambiguous ones in the gap report (do NOT block
+  on the user to confirm them).
+
 ## How to run
 ```bash
 # build a probe with the sheet work-list embedded + email it to the VDI
