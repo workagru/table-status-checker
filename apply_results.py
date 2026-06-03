@@ -34,8 +34,8 @@ STATE_DIR = os.path.join(HERE, "state")
 MARK_BEGIN, MARK_END = "===RESULTS_JSON_BEGIN===", "===RESULTS_JSON_END==="
 
 # stage code -> (status col letter, 0-based status idx, responsible col letter)
-STAGE = {"K": ("K", 10, "L"), "M": ("M", 12, "N"), "O": ("O", 14, "P"),
-         "Q": ("Q", 16, "R"), "S": ("S", 18, "T")}
+STAGE = {"I": ("I", 8, "J"), "K": ("K", 10, "L"), "M": ("M", 12, "N"),
+         "O": ("O", 14, "P"), "Q": ("Q", 16, "R"), "S": ("S", 18, "T")}
 # "no concrete result" — never written to the sheet (left as-is), only reported.
 # (not scheduled) = table absent from recon_schedule; Ready = SKIPPED-only verdict.
 SKIP_VALUES = {"(not scheduled)", "Ready"}
@@ -109,6 +109,8 @@ def main():
             gaps[res["gap"]] += 1
         for x, (sl, idx, rl) in STAGE.items():
             p = prop.get(x, "")
+            if not p:               # stage not present in this result
+                continue
             if p == "N/A":
                 buckets[x]["N/A"] += 1
                 continue

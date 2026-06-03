@@ -73,7 +73,9 @@ def build_worklist():
         e, f, t = cell(C_E), cell(C_F), cell(C_TYPE)
         if not (e or f):
             continue
+        # d=source schema/library, db=source database — needed for source-side checks
         work.append({"r": i, "e": e, "f": f, "t": t,
+                     "d": cell(3), "db": cell(C_DB),
                      "cur": [cell(c) for c in STAGE_COLS]})
     return work
 
