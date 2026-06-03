@@ -1,16 +1,16 @@
-# secrets — never commit
-# gmail_send.py contains the Gmail app password — use gmail_send.example.py
+# secrets — never commit (gmail_send.py holds the Gmail app password; use gmail_send.example.py)
 gmail_send.py
-# service-account keys live OUTSIDE the repo
-*.json
-service-account*.json
-secrets.*
-# but DO track the cross-run state store (the solution's memory)
-!state/table_status_state.json
+secrets.local.json
+secrets.local.*
+# service-account / API keys (the real ones live OUTSIDE the repo)
+*service-account*.json
+sheets-tool*.json
+*-key.json
 
 # generated / transient
 # *_filled.py = probe with the work-list baked in (built by the generator)
 *_filled.py
+/tmp/
 __pycache__/
 *.pyc
 .DS_Store
