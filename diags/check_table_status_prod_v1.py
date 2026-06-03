@@ -176,25 +176,28 @@ def main():
                           "skipped_canceled": skipped, "rows": results},
                          ensure_ascii=False, separators=(",", ":"))
 
+    # stdout = short human summary only (no JSON — it lives in 'table status').
     print(f"computed {len(results)} rows (skipped Canceled {skipped})")
     print("value distribution:", dict(dist.most_common()))
-    print(MARK_BEGIN)
-    print(payload)
-    print(MARK_END)
 
-    # self-post (resilient second capture path)
+    # The full RESULTS_JSON goes ONLY to the dedicated 'table status' channel
+    # via self-post. stdout (-> tech channel) carries the JSON only as a
+    # FALLBACK when the self-post fails, so we never lose the data.
+    posted_ok = False
     if WEBHOOK.startswith("http"):
-        summary = (f"rows={len(results)} skippedCanceled={skipped}\n"
-                   f"values={dict(dist.most_common())}\n"
-                   f"{MARK_BEGIN}\n{payload}\n{MARK_END}")
-        if len(summary) > 17000:
-            summary = (f"rows={len(results)} (payload {len(payload)}B > card cap — "
-                       f"read RESULTS_JSON from tech channel stdout instead)")
-        try:
-            st, resp = post_card(f"📋 table-status check · {utc}", summary, WEBHOOK)
-            print(f"[selfpost] status={st} {resp}")
-        except Exception as ex:
-            print(f"[selfpost] FAILED: {type(ex).__name__}: {ex}")
+        body = f"rows={len(results)} skippedCanceled={skipped} values={dict(dist.most_common())}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
+        if len(body) <= 17000:
+            try:
+                st, resp = post_card(f"📋 table-status check · {utc}", body, WEBHOOK)
+                posted_ok = (st == 200)
+                print(f"[selfpost] status={st} {resp}")
+            except Exception as ex:
+                print(f"[selfpost] FAILED: {type(ex).__name__}: {ex}")
+        else:
+            print(f"[selfpost] payload {len(payload)}B > card cap — using stdout fallback")
+    if not posted_ok:
+        print("[fallback] emitting RESULTS_JSON to stdout (self-post unavailable):")
+        print(MARK_BEGIN); print(payload); print(MARK_END)
     print("\n=== prod v1 done (NO sheet writes) ===")
     return 0
 

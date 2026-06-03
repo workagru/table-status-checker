@@ -158,17 +158,20 @@ def main():
                           "skipped_canceled": 0, "rows": results},
                          ensure_ascii=False, separators=(",", ":"))
     print(f"computed {len(results)} rows  I-dist={dict(dist)}  gaps={dict(errors)}")
-    print(MARK_BEGIN); print(payload); print(MARK_END)
-
+    # full JSON only to 'table status'; stdout fallback if self-post fails
+    posted_ok = False
     if WEBHOOK.startswith("http"):
         body = f"Prerequisites (DB2i) rows={len(results)} I={dict(dist)} gaps={dict(errors)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
-        if len(body) > 17000:
-            body = f"Prerequisites rows={len(results)} (payload too big — read tech channel stdout)"
-        try:
-            st, resp = post_card(f"🔑 prerequisites check (DB2i) · {utc}", body, WEBHOOK)
-            print(f"[selfpost] status={st} {resp}")
-        except Exception as ex:
-            print(f"[selfpost] FAILED: {type(ex).__name__}: {ex}")
+        if len(body) <= 17000:
+            try:
+                st, resp = post_card(f"🔑 prerequisites check (DB2i) · {utc}", body, WEBHOOK)
+                posted_ok = (st == 200)
+                print(f"[selfpost] status={st} {resp}")
+            except Exception as ex:
+                print(f"[selfpost] FAILED: {type(ex).__name__}: {ex}")
+    if not posted_ok:
+        print("[fallback] emitting RESULTS_JSON to stdout:")
+        print(MARK_BEGIN); print(payload); print(MARK_END)
     print("\n=== prereq db2i v1 done (NO sheet writes) ===")
     return 0
 
