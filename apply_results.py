@@ -17,10 +17,9 @@ Usage:
   python3 apply_results.py --apply --backup # write to the sheet (backup first)
 """
 import argparse
-import glob
+import html
 import json
 import os
-import re
 import time
 
 import gspread
@@ -37,6 +36,9 @@ MARK_BEGIN, MARK_END = "===RESULTS_JSON_BEGIN===", "===RESULTS_JSON_END==="
 # stage code -> (status col letter, 0-based status idx, responsible col letter)
 STAGE = {"K": ("K", 10, "L"), "M": ("M", 12, "N"), "O": ("O", 14, "P"),
          "Q": ("Q", 16, "R"), "S": ("S", 18, "T")}
+# "no concrete result" — never written to the sheet (left as-is), only reported.
+# (not scheduled) = table absent from recon_schedule; Ready = SKIPPED-only verdict.
+SKIP_VALUES = {"(not scheduled)", "Ready"}
 
 
 def find_latest_result(explicit=None):
@@ -56,6 +58,7 @@ def find_latest_result(explicit=None):
                 msg = json.loads(line)
                 text = msg.get("text", "") or ""
                 seg = text.split(MARK_BEGIN, 1)[1].split(MARK_END, 1)[0].strip()
+                seg = html.unescape(seg)   # capture HTML-escapes > as &gt; etc.
                 payload = json.loads(seg)
                 t = msg.get("time", "") or ""
                 if best is None or t >= best[0]:
@@ -109,6 +112,9 @@ def main():
             if p == "N/A":
                 buckets[x]["N/A"] += 1
                 continue
+            if p in SKIP_VALUES:
+                buckets[x]["no-data(left)"] += 1
+                continue
             cv, pv = doneness(cur_cell(r, idx)), doneness(p)
             if cv == pv:
                 buckets[x]["AGREE"] += 1
@@ -154,7 +160,7 @@ def main():
         r, prop = res["r"], res["prop"]
         for x, (sl, idx, rl) in STAGE.items():
             p = prop.get(x, "")
-            if not p:
+            if not p or p in SKIP_VALUES:   # no concrete result -> leave the cell
                 continue
             updates.append({"range": f"{sl}{r}", "values": [[p]]})
             if p != "N/A":
