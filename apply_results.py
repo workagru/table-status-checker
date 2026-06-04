@@ -242,7 +242,15 @@ def recon_finalize(apply):
             s = "Done"
         else:
             nn = [g(idx) for idx in UP if g(idx).lower() != "n/a"]
-            s = "Ready" if (nn and all(v.lower() == "done" for v in nn)) else "Not started"
+            if nn and all(v.lower() == "done" for v in nn):
+                s = "Ready"                       # whole pipeline done, awaiting recon
+            elif g(12).lower() in ("", "not started"):
+                s = "Not started"                 # GP table not created -> recon can't have started
+            else:
+                s = None                          # partial pipeline / ambiguous -> leave as-is
+        if s is None:
+            dist["(left)"] += 1
+            continue
         if s != g(18):
             updates.append({"range": f"S{i}", "values": [[s]]})
         dist[s] += 1
