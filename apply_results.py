@@ -241,16 +241,10 @@ def recon_finalize(apply):
         elif c == "P":
             s = "Done"
         else:
+            # not in recon: whole pipeline done -> Ready; otherwise (backlog OR
+            # partial pipeline) -> Not started (user 2026-06-04).
             nn = [g(idx) for idx in UP if g(idx).lower() != "n/a"]
-            if nn and all(v.lower() == "done" for v in nn):
-                s = "Ready"                       # whole pipeline done, awaiting recon
-            elif g(12).lower() in ("", "not started"):
-                s = "Not started"                 # GP table not created -> recon can't have started
-            else:
-                s = None                          # partial pipeline / ambiguous -> leave as-is
-        if s is None:
-            dist["(left)"] += 1
-            continue
+            s = "Ready" if (nn and all(v.lower() == "done" for v in nn)) else "Not started"
         if s != g(18):
             updates.append({"range": f"S{i}", "values": [[s]]})
         dist[s] += 1
