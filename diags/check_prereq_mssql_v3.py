@@ -36,7 +36,7 @@ try:
     EXTRA = json.loads(MSSQL_CREDS_JSON)
 except Exception:
     EXTRA = []
-CONNECT_TIMEOUT = 10
+CONNECT_TIMEOUT = 6
 MARK_BEGIN, MARK_END = "===RESULTS_JSON_BEGIN===", "===RESULTS_JSON_END==="
 
 
@@ -88,48 +88,64 @@ def main():
     except Exception as e:
         print("pyodbc not available:", e); return 1
 
-    default_driver = "ODBC Driver 17 for SQL Server"
+    DEF_DRIVER = "ODBC Driver 17 for SQL Server"
     endpoints = {}        # (server, port) -> spec (driver+user+pass+sample db)
     db_explicit = {}      # db_lower -> (server, port)
+    prof_by_host = {}     # hostname -> working {driver,encrypt,trust} from a profile
     try:
         from configs.config_sources import SOURCE_PROFILES
         for nm, p in SOURCE_PROFILES.items():
             if (p.get('dialect') or '').lower() == 'mssql' and p.get('server') and 'CHANGEME' not in str(p.get('server')):
                 ep = (p['server'], p.get('port', 1433))
                 endpoints.setdefault(ep, dict(p, sample=p.get('database', 'master')))
-                default_driver = p.get('driver', default_driver)
+                prof_by_host.setdefault(p['server'], {k: p.get(k) for k in ('driver', 'encrypt', 'trust_server_certificate')})
     except Exception as e:
         print("SOURCE_PROFILES WARN:", e)
     for c in EXTRA:
         if (c.get('dialect') or 'mssql').lower() != 'mssql':
             continue                              # skip Sybase etc.
         ep = (c['server'], c.get('port', 1433))
-        spec = dict(c); spec.setdefault('driver', default_driver); spec['sample'] = c.get('database', 'master')
-        endpoints[ep] = spec                       # explicit creds win for this endpoint
+        spec = dict(c); spec['sample'] = c.get('database', 'master')
+        base = prof_by_host.get(c['server'])      # reuse the SAME server's working settings
+        if base and base.get('driver'):
+            spec['driver'] = base['driver']
+            if base.get('encrypt') is not None: spec['encrypt'] = base['encrypt']
+            if base.get('trust_server_certificate') is not None: spec['trust_server_certificate'] = base['trust_server_certificate']
+        else:
+            spec.setdefault('driver', DEF_DRIVER); spec.setdefault('encrypt', 'no'); spec.setdefault('trust_server_certificate', 'yes')
+        endpoints[ep] = spec                       # explicit endpoint (good settings)
         if c.get('database'):
             db_explicit[c['database'].strip().lower()] = ep
     print(f"endpoints: {list(endpoints)}")
 
-    # connect each endpoint, list its databases
-    conns = {}; db_ep = {}
+    # connect each endpoint (try its settings, then a couple of fallbacks)
+    conns = {}; db_ep = {}; ep_ok = []; ep_fail = []
     for ep, spec in endpoints.items():
-        for db0 in (spec.get('sample', 'master'), 'master'):
+        variants = [spec,
+                    dict(spec, driver=DEF_DRIVER, encrypt="no", trust_server_certificate="yes"),
+                    dict(spec, driver="ODBC Driver 18 for SQL Server", encrypt="no", trust_server_certificate="yes")]
+        cn = None; last = "?"
+        for v in variants:
             try:
-                cn = pyodbc.connect(conn_str(spec, db0), timeout=CONNECT_TIMEOUT, autocommit=True)
-                conns[ep] = cn
-                cur = cn.cursor(); cur.execute("SELECT name FROM sys.databases WHERE database_id>4")
-                for (nm,) in cur.fetchall():
-                    db_ep.setdefault(nm.lower(), ep)
-                cur.close()
+                cn = pyodbc.connect(conn_str(v, v.get('sample', 'master')), timeout=CONNECT_TIMEOUT, autocommit=True)
                 break
             except Exception as e:
-                last = f"{type(e).__name__}: {str(e)[:60]}"
-        else:
-            print(f"  [{ep}] connect FAILED: {last}")
+                last = f"{type(e).__name__}: {str(e)[:55]}"
+        if not cn:
+            print(f"  [{ep}] FAILED: {last}"); ep_fail.append((ep, last)); continue
+        conns[ep] = cn; ep_ok.append(ep)
+        try:
+            cur = cn.cursor(); cur.execute("SELECT name FROM sys.databases WHERE database_id>4")
+            for (nm,) in cur.fetchall():
+                db_ep.setdefault(nm.lower(), ep)
+            cur.close()
+        except Exception:
+            pass
     for db, ep in db_explicit.items():            # explicit mapping overrides discovery
         if ep in conns:
             db_ep[db] = ep
-    print(f"reachable databases: {len(db_ep)}; connected endpoints: {len(conns)}")
+    print(f"endpoints connected: {len(ep_ok)}/{len(endpoints)}; failed: {[e[0] for e in ep_fail]}")
+    print(f"reachable databases: {len(db_ep)}")
 
     by_db = defaultdict(list)
     for r in rows:
