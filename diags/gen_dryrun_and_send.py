@@ -118,6 +118,12 @@ def main():
         filled = filled.replace('"__ALIAS_MAP_JSON__"', json.dumps(json.dumps(aliases)))
         print(f"injected {len(aliases)} schema aliases")
 
+    # 4) inject extra MSSQL creds from secrets (only if the probe expects them)
+    if '"__MSSQL_CREDS_JSON__"' in filled:
+        creds = load_secret("mssql_creds") or []
+        filled = filled.replace('"__MSSQL_CREDS_JSON__"', json.dumps(json.dumps(creds)))
+        print(f"injected {len(creds)} mssql creds")
+
     out = f"/tmp/{SUBJECT}_filled.py"
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(filled)
