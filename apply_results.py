@@ -20,6 +20,7 @@ import argparse
 import html
 import json
 import os
+import re
 import time
 
 import gspread
@@ -150,9 +151,47 @@ def doneness(v):
 UPSTREAM = [("I", 8), ("K", 10), ("M", 12), ("O", 14), ("Q", 16)]  # for cdc Ready rule
 
 
+def coverage_missing(vals):
+    """Parse the latest discover_server_dbs card -> reachable DB names, then
+    return the sheet's source DBs we have NO access to: [(db, rows, note)]."""
+    reachable = set()
+    for fp in (os.path.join(WATCHER_DATA, "tech_channel.jsonl"),
+               os.path.join(WATCHER_DATA, "table_status.jsonl")):
+        if not os.path.isfile(fp):
+            continue
+        for line in open(fp, encoding="utf-8", errors="replace"):
+            if "discover_server_dbs" not in line and "server DB lists" not in line:
+                continue
+            try:
+                t = json.loads(line).get("text", "") or ""
+                for mm in re.finditer(r"\][^\n]*\d+ dbs:\s*\n([^\[]+)", t):
+                    for d in mm.group(1).replace("\n", " ").split(","):
+                        d = d.strip()
+                        if d and "===" not in d and "watcher" not in d:
+                            reachable.add(d.lower())
+            except Exception:
+                pass
+    from collections import Counter
+    cnt = Counter(); sysn = {}
+    for row in vals[1:]:
+        c = row[2].strip() if len(row) > 2 else ""
+        if c:
+            cnt[c] += 1; sysn[c] = row[0].strip() if row else ""
+    miss = []
+    for db, n in cnt.items():
+        s = sysn.get(db, "")
+        if "DB2" in s or db == "B7031210":
+            continue
+        if "SAP IQ" in s:
+            miss.append((db, n, "SAP IQ (not MSSQL)")); continue
+        if db.lower() not in reachable:
+            miss.append((db, n, ""))
+    return sorted(miss, key=lambda x: -x[1])
+
+
 def make_report(apply):
     """Write an 'Auto-check report' tab from the latest GP result: a summary
-    + the actionable SHEET_AHEAD findings (sheet=Done but GP says not)."""
+    + SHEET_AHEAD findings + no-access source DBs + tables missing in source."""
     found = find_latest_result(require_stage="M")
     if not found:
         print("report: no GP result"); return
@@ -192,17 +231,37 @@ def make_report(apply):
             elif doneness(cv) == "no" and doneness(p) == "done":
                 cats["GP_AHEAD"] += 1
 
+    # --- tables with DB access but no source table (from prereq result) ---
+    no_table_src = []
+    pre = find_latest_result(require_stage="I")
+    if pre:
+        for res in pre[1].get("rows", []):
+            if (res.get("gap") or "").startswith("MISSING_TABLE_SRC"):
+                rr = res["r"]
+                no_table_src.append([cell(rr, 2), f"{cell(rr,3)}.{cell(rr,5)}"])
+    # --- source DBs we have no access to (from coverage) ---
+    no_access = coverage_missing(vals)
+
     stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
     out = [["Auto-check report", stamp],
            ["rows checked", str(len(payload.get("rows", [])))],
            ["SHEET_AHEAD (sheet=Done but GP=no — investigate)", str(cats["SHEET_AHEAD"])],
            ["GP_AHEAD (GP=Done, sheet was behind — auto-corrected)", str(cats["GP_AHEAD"])],
            ["NO_TABLE_GP (not created in GP — backlog)", str(cats["NO_TABLE_GP"])],
-           [], ["table", "type", "stage", "sheet", "GP (autotester)"]]
+           ["NO DB ACCESS (source DBs without creds)", str(len(no_access))],
+           ["DB OK but TABLE MISSING in source", str(len(no_table_src))],
+           [], ["== SHEET_AHEAD findings =="], ["table", "type", "stage", "sheet", "GP (autotester)"]]
     out += findings
+    out += [[], ["== NO DB ACCESS (need creds for these source databases) =="],
+            ["source database", "rows", "note"]]
+    out += [[db, str(n), note] for db, n, note in no_access]
+    out += [[], ["== DB reachable but TABLE not found in source =="],
+            ["source database", "schema.table"]]
+    out += no_table_src
     if not apply:
         print(f"report (dry): SHEET_AHEAD={cats['SHEET_AHEAD']} GP_AHEAD={cats['GP_AHEAD']} "
-              f"NO_TABLE_GP={cats['NO_TABLE_GP']}; {len(findings)} finding rows (pass --apply to write the tab)")
+              f"NO_TABLE_GP={cats['NO_TABLE_GP']} NO_DB_ACCESS={len(no_access)} "
+              f"TABLE_MISSING_SRC={len(no_table_src)} (pass --apply to write the tab)")
         return
     title = "Auto-check report"
     try:
