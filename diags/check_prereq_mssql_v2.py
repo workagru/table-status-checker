@@ -99,8 +99,8 @@ def main():
                 specs[p['server']] = dict(p); default_driver = p.get('driver', default_driver)
     except Exception as e:
         print("SOURCE_PROFILES WARN:", e)
-    for c in EXTRA:
-        if c.get('server'):
+    for c in EXTRA:                          # user creds only ADD new servers
+        if c.get('server') and c['server'] not in specs:  # profiles already work for known servers
             c = dict(c); c.setdefault('driver', default_driver); specs[c['server']] = c
     print(f"servers: {list(specs)}")
 
@@ -179,16 +179,16 @@ def main():
                           "no_access_rows": gaps.get("NO_ACCESS_DB", 0), "rows_str": "\n".join(lines)},
                          ensure_ascii=False, separators=(",", ":"))
     print(f"computed {len(results)} rows  I={dict(dist)}  gaps={dict(gaps)}  shipped={len(lines)}")
-    posted = False
     if WEBHOOK.startswith("http"):
         body = f"Prerequisites (MSSQL all servers) I={dict(dist)} gaps={dict(gaps)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
         if len(body) <= 17000:
             try:
-                posted = post_card(f"🔑 prerequisites (MSSQL all) · {utc}", body, WEBHOOK) == 200
+                print("[selfpost]", post_card(f"🔑 prerequisites (MSSQL all) · {utc}", body, WEBHOOK))
             except Exception as ex:
                 print("[selfpost] FAIL:", ex)
-    if not posted:
-        print(MARK_BEGIN); print(payload); print(MARK_END)
+    # always emit to stdout too — compact payload is small and tech channel is
+    # captured reliably (the self-post to 'table status' depends on the active tab).
+    print(MARK_BEGIN); print(payload); print(MARK_END)
     print("\n=== prereq mssql v2 done (NO sheet writes) ===")
     return 0
 
