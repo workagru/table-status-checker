@@ -1,0 +1,10 @@
+{
+  "_comment": "Sheet Source-Database name (col C) -> REAL db name on the server. High-confidence, structural matches confirmed by discover_dbnames_v1 (SIMAT_B2C{X} == UAT_B2C{X} on DBUATCJ2:1450). The prereq probe USEs the real db. Self-validating: if a mapping is wrong, that db's rows show MISSING_TABLE_SRC instead of resolving.",
+  "simat_b2cenquiry": "UAT_B2CEnquiry",
+  "simat_b2cfinance": "UAT_B2CFinance",
+  "simat_b2cidentity": "UAT_B2CIdentity",
+  "simat_b2cdispute": "UAT_B2CDispute",
+  "simat_b2cnarratives": "UAT_B2CNarratives",
+  "simat_b2cpackagesalerts": "UAT_B2CPackagesAlerts",
+  "simat_b2ccreditscore": "UAT_B2CCreditScore"
+}

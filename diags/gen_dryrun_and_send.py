@@ -124,6 +124,14 @@ def main():
         filled = filled.replace('"__MSSQL_CREDS_JSON__"', json.dumps(json.dumps(creds)))
         print(f"injected {len(creds)} mssql creds")
 
+    # 5) inject DB-name aliases (sheet Source-Database -> real server db name)
+    if '"__DB_ALIAS_JSON__"' in filled:
+        dp = os.path.join(REPO_ROOT, "db_aliases.json")
+        dmap = {k: v for k, v in (json.load(open(dp)).items() if os.path.isfile(dp) else [])
+                if not k.startswith("_")}
+        filled = filled.replace('"__DB_ALIAS_JSON__"', json.dumps(json.dumps(dmap)))
+        print(f"injected {len(dmap)} db-name aliases")
+
     out = f"/tmp/{SUBJECT}_filled.py"
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(filled)

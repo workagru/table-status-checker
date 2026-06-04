@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""PRODUCTION Prerequisites — MSSQL v3, routes by (server, PORT) (READ-ONLY).
+"""PRODUCTION Prerequisites — MSSQL v4, routes by (server, PORT) (READ-ONLY).
 
-v3 over v2: databases live on different PORTS of the same host (DBUATCJ2 has
-instances on 1450/1451/1452/1453), so we key endpoints by (server, port), not
-host. Endpoints come from the injected per-db creds + SOURCE_PROFILES. We
-connect each endpoint once, read sys.databases, and also honour the explicit
-db->endpoint mapping from the creds. Then per source DB: USE it, read the table
-catalog once, decide col I (Done / 'Read granted, but no CDC' / gap). Sybase
-endpoints are skipped (ODBC SQL Server driver can't talk TDS-Sybase).
-Compact 'ci' output + stdout. Injected: WORKLIST_B64, WEBHOOK, MSSQL_CREDS_JSON.
+v4 over v3: the VDI has ONLY the legacy 'SQL Server' ODBC driver installed
+(plus DataDirect Wire-Protocol drivers) — NOT 'ODBC Driver 17/18 for SQL
+Server'. v3 keyed new servers to ODBC 17 and connected to the per-cred sample
+DB, so every new endpoint died with IM002 (driver missing) / db-not-found.
+v4: (1) use a driver that the profiles actually use (installed) for EVERY
+endpoint, (2) always connect to 'master' (exists everywhere) for discovery,
+(3) drop the ODBC 17/18 fallbacks (vary Encrypt instead).
+
+databases live on different PORTS of the same host (DBUATCJ2 has instances on
+1450/1451/1452/1453), so endpoints are keyed by (server, port). Endpoints come
+from the injected per-db creds + SOURCE_PROFILES. We connect each endpoint
+once, read sys.databases, honour the explicit db->endpoint mapping, then per
+source DB: USE it, read the table catalog once, decide col I (Done / 'Read
+granted, but no CDC' / gap). Sybase endpoints are skipped (ODBC SQL Server
+driver can't talk TDS-Sybase). Compact 'ci' output + stdout.
+Injected: WORKLIST_B64, WEBHOOK, MSSQL_CREDS_JSON.
 """
 import base64
 import json
@@ -74,19 +82,23 @@ def conn_str(spec, database):
     server = f"{spec['server']},{spec['port']}" if spec.get('port') else spec['server']
     return ";".join([f"DRIVER={{{spec['driver']}}}", f"SERVER={server}", f"DATABASE={database}",
                      f"UID={spec['user']}", f"PWD={spec['password']}",
-                     f"Encrypt={spec.get('encrypt', 'yes')}",
+                     f"Encrypt={spec.get('encrypt', 'no')}",
                      f"TrustServerCertificate={spec.get('trust_server_certificate', 'yes')}",
                      f"Connect Timeout={CONNECT_TIMEOUT}"]) + ";"
 
 
 def main():
     utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-    print(f"check_prereq_mssql v3 @ {utc}")
+    print(f"check_prereq_mssql v4 @ {utc}")
     rows = json.loads(base64.b64decode(WORKLIST_B64.encode()).decode("utf-8"))
     try:
         import pyodbc
     except Exception as e:
         print("pyodbc not available:", e); return 1
+    try:
+        print("drivers:", [d for d in pyodbc.drivers()])
+    except Exception:
+        pass
 
     endpoints = {}        # (server, port) -> spec (driver+user+pass+sample db)
     db_explicit = {}      # db_lower -> (server, port)
@@ -103,7 +115,7 @@ def main():
                     ref = {k: p.get(k) for k in ('driver', 'encrypt', 'trust_server_certificate')}
     except Exception as e:
         print("SOURCE_PROFILES WARN:", e)
-    DEF_DRIVER = ref.get('driver') or "ODBC Driver 17 for SQL Server"   # an INSTALLED driver
+    DEF_DRIVER = ref.get('driver') or "SQL Server"   # an INSTALLED driver (VDI has only 'SQL Server' + DataDirect)
     for c in EXTRA:
         if (c.get('dialect') or 'mssql').lower() != 'mssql':
             continue                              # skip Sybase etc.
@@ -118,7 +130,7 @@ def main():
             db_explicit[c['database'].strip().lower()] = ep
     print(f"ref driver: {DEF_DRIVER!r}; endpoints: {len(endpoints)}")
 
-    # connect each endpoint (try its settings, then a couple of fallbacks)
+    # connect each endpoint (its driver, vary Encrypt) — always to 'master'
     conns = {}; db_ep = {}; ep_ok = []; ep_fail = []
     for ep, spec in endpoints.items():
         variants = [spec,
@@ -144,7 +156,9 @@ def main():
     for db, ep in db_explicit.items():            # explicit mapping overrides discovery
         if ep in conns:
             db_ep[db] = ep
-    print(f"endpoints connected: {len(ep_ok)}/{len(endpoints)}; failed: {[e[0] for e in ep_fail]}")
+    print(f"endpoints connected: {len(ep_ok)}/{len(endpoints)}")
+    for ep, err in ep_fail:
+        print(f"  FAIL {ep[0]}:{ep[1]} -> {err}")
     print(f"reachable databases: {len(db_ep)}")
 
     by_db = defaultdict(list)
@@ -200,14 +214,14 @@ def main():
                           "rows_str": "\n".join(lines)}, ensure_ascii=False, separators=(",", ":"))
     print(f"computed {len(results)} rows  I={dict(dist)}  gaps={dict(gaps)}  no_access_dbs={len(noacc)} shipped={len(lines)}")
     if WEBHOOK.startswith("http"):
-        body = f"Prerequisites (MSSQL v3) I={dict(dist)} gaps={dict(gaps)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
+        body = f"Prerequisites (MSSQL v4) I={dict(dist)} gaps={dict(gaps)} eps={len(ep_ok)}/{len(endpoints)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
         if len(body) <= 17000:
             try:
-                print("[selfpost]", post_card(f"🔑 prerequisites (MSSQL v3) · {utc}", body, WEBHOOK))
+                print("[selfpost]", post_card(f"🔑 prerequisites (MSSQL v4) · {utc}", body, WEBHOOK))
             except Exception as ex:
                 print("[selfpost] FAIL:", ex)
     print(MARK_BEGIN); print(payload); print(MARK_END)
-    print("\n=== prereq mssql v3 done (NO sheet writes) ===")
+    print("\n=== prereq mssql v4 done (NO sheet writes) ===")
     return 0
 
 

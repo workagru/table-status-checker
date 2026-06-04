@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""PRODUCTION Prerequisites — MSSQL v3, routes by (server, PORT) (READ-ONLY).
+"""PRODUCTION Prerequisites — MSSQL v5, routes by (server, PORT) (READ-ONLY).
 
-v3 over v2: databases live on different PORTS of the same host (DBUATCJ2 has
-instances on 1450/1451/1452/1453), so we key endpoints by (server, port), not
-host. Endpoints come from the injected per-db creds + SOURCE_PROFILES. We
-connect each endpoint once, read sys.databases, and also honour the explicit
-db->endpoint mapping from the creds. Then per source DB: USE it, read the table
-catalog once, decide col I (Done / 'Read granted, but no CDC' / gap). Sybase
-endpoints are skipped (ODBC SQL Server driver can't talk TDS-Sybase).
-Compact 'ci' output + stdout. Injected: WORKLIST_B64, WEBHOOK, MSSQL_CREDS_JSON.
+v5 over v4:
+  * DB-name aliases (DB_ALIAS_JSON): the sheet's Source-Database (col C) can
+    differ from the real db on the server (sheet 'SIMAT_B2CEnquiry' == server
+    'UAT_B2CEnquiry' on DBUATCJ2:1450). We USE the REAL db, keyed by the sheet
+    name. Self-validating: a wrong alias just yields MISSING_TABLE_SRC.
+  * Better gap taxonomy: when USE fails we tell PERM (db visible in
+    sys.databases but no access) from NOTFOUND_DB (db absent under that name).
+v4 kept: installed 'SQL Server' driver for every endpoint, connect to 'master'.
+Compact 'ci' output + stdout. Injected: WORKLIST_B64, WEBHOOK, MSSQL_CREDS_JSON,
+DB_ALIAS_JSON.
 """
 import base64
 import json
@@ -32,10 +34,15 @@ if os.path.isdir(RUNTIME) and RUNTIME not in sys.path:
 WORKLIST_B64 = "__WORKLIST_B64__"
 WEBHOOK = "__WEBHOOK__"
 MSSQL_CREDS_JSON = "__MSSQL_CREDS_JSON__"
+DB_ALIAS_JSON = "__DB_ALIAS_JSON__"
 try:
     EXTRA = json.loads(MSSQL_CREDS_JSON)
 except Exception:
     EXTRA = []
+try:
+    DB_ALIAS = {k.lower(): v for k, v in json.loads(DB_ALIAS_JSON).items()}
+except Exception:
+    DB_ALIAS = {}
 CONNECT_TIMEOUT = 6
 MARK_BEGIN, MARK_END = "===RESULTS_JSON_BEGIN===", "===RESULTS_JSON_END==="
 
@@ -74,24 +81,21 @@ def conn_str(spec, database):
     server = f"{spec['server']},{spec['port']}" if spec.get('port') else spec['server']
     return ";".join([f"DRIVER={{{spec['driver']}}}", f"SERVER={server}", f"DATABASE={database}",
                      f"UID={spec['user']}", f"PWD={spec['password']}",
-                     f"Encrypt={spec.get('encrypt', 'yes')}",
+                     f"Encrypt={spec.get('encrypt', 'no')}",
                      f"TrustServerCertificate={spec.get('trust_server_certificate', 'yes')}",
                      f"Connect Timeout={CONNECT_TIMEOUT}"]) + ";"
 
 
 def main():
     utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-    print(f"check_prereq_mssql v3 @ {utc}")
+    print(f"check_prereq_mssql v5 @ {utc}  (db_aliases={len(DB_ALIAS)})")
     rows = json.loads(base64.b64decode(WORKLIST_B64.encode()).decode("utf-8"))
     try:
         import pyodbc
     except Exception as e:
         print("pyodbc not available:", e); return 1
 
-    endpoints = {}        # (server, port) -> spec (driver+user+pass+sample db)
-    db_explicit = {}      # db_lower -> (server, port)
-    prof_by_host = {}     # hostname -> working {driver,encrypt,trust} from a profile
-    ref = {}              # an installed/working driver from the profiles
+    endpoints = {}; db_explicit = {}; prof_by_host = {}; ref = {}
     try:
         from configs.config_sources import SOURCE_PROFILES
         for nm, p in SOURCE_PROFILES.items():
@@ -103,13 +107,13 @@ def main():
                     ref = {k: p.get(k) for k in ('driver', 'encrypt', 'trust_server_certificate')}
     except Exception as e:
         print("SOURCE_PROFILES WARN:", e)
-    DEF_DRIVER = ref.get('driver') or "ODBC Driver 17 for SQL Server"   # an INSTALLED driver
+    DEF_DRIVER = ref.get('driver') or "SQL Server"
     for c in EXTRA:
         if (c.get('dialect') or 'mssql').lower() != 'mssql':
-            continue                              # skip Sybase etc.
+            continue
         ep = (c['server'], c.get('port', 1433))
         spec = dict(c); spec['sample'] = c.get('database', 'master')
-        base = prof_by_host.get(c['server']) or ref   # same-host profile, else any working driver
+        base = prof_by_host.get(c['server']) or ref
         spec['driver'] = base.get('driver', DEF_DRIVER)
         spec['encrypt'] = base.get('encrypt', 'no')
         spec['trust_server_certificate'] = base.get('trust_server_certificate', 'yes')
@@ -118,58 +122,58 @@ def main():
             db_explicit[c['database'].strip().lower()] = ep
     print(f"ref driver: {DEF_DRIVER!r}; endpoints: {len(endpoints)}")
 
-    # connect each endpoint (try its settings, then a couple of fallbacks)
-    conns = {}; db_ep = {}; ep_ok = []; ep_fail = []
+    conns = {}; db_ep = {}; ep_dbset = defaultdict(set); ep_ok = []; ep_fail = []
     for ep, spec in endpoints.items():
-        variants = [spec,
-                    dict(spec, encrypt="no", trust_server_certificate="yes"),
-                    dict(spec, encrypt="yes", trust_server_certificate="yes")]
         cn = None; last = "?"
-        for v in variants:
+        for v in (spec, dict(spec, encrypt="no", trust_server_certificate="yes"),
+                  dict(spec, encrypt="yes", trust_server_certificate="yes")):
             try:
-                cn = pyodbc.connect(conn_str(v, "master"), timeout=CONNECT_TIMEOUT, autocommit=True)
-                break
+                cn = pyodbc.connect(conn_str(v, "master"), timeout=CONNECT_TIMEOUT, autocommit=True); break
             except Exception as e:
                 last = f"{type(e).__name__}: {str(e)[:55]}"
         if not cn:
-            print(f"  [{ep}] FAILED: {last}"); ep_fail.append((ep, last)); continue
+            ep_fail.append((ep, last)); continue
         conns[ep] = cn; ep_ok.append(ep)
         try:
             cur = cn.cursor(); cur.execute("SELECT name FROM sys.databases WHERE database_id>4")
             for (nm,) in cur.fetchall():
-                db_ep.setdefault(nm.lower(), ep)
+                db_ep.setdefault(nm.lower(), ep); ep_dbset[ep].add(nm.lower())
             cur.close()
         except Exception:
             pass
-    for db, ep in db_explicit.items():            # explicit mapping overrides discovery
+    for db, ep in db_explicit.items():
         if ep in conns:
-            db_ep[db] = ep
-    print(f"endpoints connected: {len(ep_ok)}/{len(endpoints)}; failed: {[e[0] for e in ep_fail]}")
+            db_ep.setdefault(db, ep)
+    print(f"endpoints connected: {len(ep_ok)}/{len(endpoints)}")
+    for ep, err in ep_fail:
+        print(f"  FAIL {ep[0]}:{ep[1]} -> {err}")
     print(f"reachable databases: {len(db_ep)}")
 
     by_db = defaultdict(list)
     for r in rows:
         by_db[(r.get("db") or "").strip()].append(r)
 
-    results = []; dist = Counter(); gaps = Counter(); noacc = set()
+    results = []; dist = Counter(); gaps = Counter()
     for db, drows in by_db.items():
-        ep = db_ep.get(db.lower())
+        real = DB_ALIAS.get(db.lower(), db)                 # sheet name -> real db
+        ep = db_ep.get(real.lower()) or db_ep.get(db.lower()) or db_explicit.get(db.lower())
         if not ep or ep not in conns:
-            noacc.add(db)
             for r in drows:
                 gaps["NO_ACCESS_DB"] += 1
                 results.append({"r": r["r"], "t": (r.get("t") or "").lower(), "prop": {}, "gap": "NO_ACCESS_DB"})
             continue
         try:
             cur = conns[ep].cursor()
-            cur.execute(f"USE [{db}]")
+            cur.execute(f"USE [{real}]")
             cur.execute("SELECT LOWER(SCHEMA_NAME(schema_id)), LOWER(name), is_tracked_by_cdc FROM sys.tables")
             catalog = {(s, t): bool(c) for s, t, c in cur.fetchall()}
             cur.close()
         except Exception as e:
+            known = real.lower() in ep_dbset.get(ep, set())
+            code = "PERM" if known else "NOTFOUND_DB"
             for r in drows:
-                gaps["DB_ERR"] += 1
-                results.append({"r": r["r"], "t": (r.get("t") or "").lower(), "prop": {}, "gap": "DB_ERR:" + type(e).__name__})
+                gaps[code] += 1
+                results.append({"r": r["r"], "t": (r.get("t") or "").lower(), "prop": {}, "gap": code})
             continue
         for r in drows:
             sch = (r.get("d") or "").strip().lower(); tbl = (r.get("f") or "").strip().lower()
@@ -188,26 +192,26 @@ def main():
         except Exception: pass
 
     IMAP = {"Done": "D", "Read granted, but no CDC": "C", "Not started": "N"}
-    GMAP = {"MISSING_TABLE_SRC": "M", "DB_ERR": "E"}
+    GMAP = {"MISSING_TABLE_SRC": "M"}     # PERM/NOTFOUND_DB/DB_ERR -> 'E' (leave I blank)
     lines = []
     for res in results:
         g = res.get("gap") or ""
-        if g.startswith("NO_ACCESS_DB"):
+        if g == "NO_ACCESS_DB":
             continue
-        gc = GMAP.get(g.split(":")[0], "E" if g else "_")
+        gc = GMAP.get(g, "E" if g else "_")
         lines.append(f'{res["r"]}:{IMAP.get(res["prop"].get("I",""), "_")}:{gc}')
     payload = json.dumps({"utc": utc, "fmt": "ci", "kind": "prereq_mssql", "chunk": 1, "chunks": 1,
                           "rows_str": "\n".join(lines)}, ensure_ascii=False, separators=(",", ":"))
-    print(f"computed {len(results)} rows  I={dict(dist)}  gaps={dict(gaps)}  no_access_dbs={len(noacc)} shipped={len(lines)}")
+    print(f"computed {len(results)} rows  I={dict(dist)}  gaps={dict(gaps)} shipped={len(lines)}")
     if WEBHOOK.startswith("http"):
-        body = f"Prerequisites (MSSQL v3) I={dict(dist)} gaps={dict(gaps)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
+        body = f"Prerequisites (MSSQL v5) I={dict(dist)} gaps={dict(gaps)} eps={len(ep_ok)}/{len(endpoints)}\n{MARK_BEGIN}\n{payload}\n{MARK_END}"
         if len(body) <= 17000:
             try:
-                print("[selfpost]", post_card(f"🔑 prerequisites (MSSQL v3) · {utc}", body, WEBHOOK))
+                print("[selfpost]", post_card(f"🔑 prerequisites (MSSQL v5) · {utc}", body, WEBHOOK))
             except Exception as ex:
                 print("[selfpost] FAIL:", ex)
     print(MARK_BEGIN); print(payload); print(MARK_END)
-    print("\n=== prereq mssql v3 done (NO sheet writes) ===")
+    print("\n=== prereq mssql v5 done (NO sheet writes) ===")
     return 0
 
 

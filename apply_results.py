@@ -384,6 +384,7 @@ def main():
     ap.add_argument("--finalize-recon", dest="finalize", action="store_true",
                     help="apply the cdc 'Ready' rule and exit")
     ap.add_argument("--require", help="only accept a result whose stage_cols has this key (M=GP probe, I=prereq)")
+    ap.add_argument("--stages", help="restrict writes to these stage letters, e.g. 'M' or 'KMOQ' (default: all present)")
     ap.add_argument("--report", action="store_true", help="write the Auto-check report tab and exit")
     ap.add_argument("--recon", action="store_true", help="re-derive Data reconciliation (col S) by the tree and exit")
     args = ap.parse_args()
@@ -476,6 +477,8 @@ def main():
         r, prop = res["r"], res["prop"]
         t = (res.get("t") or "").strip().lower()
         for x, (sl, idx, rl) in STAGE.items():
+            if args.stages and x not in args.stages.upper():   # stage filter (e.g. only 'M')
+                continue
             p = prop.get(x, "")
             if not p or p in SKIP_VALUES:   # no concrete result -> leave the cell
                 continue
@@ -492,6 +495,8 @@ def main():
     STATUS_IDX = [8, 10, 12, 14, 16, 18]
     flagged = 0
     for res in rows:
+        if args.stages:        # stage-restricted apply (e.g. only col M) -> no Comment notes
+            break
         t = (res.get("t") or "").strip().lower()
         if t not in ("lookup", "inter") or not res.get("cdc_detected"):
             continue
