@@ -153,7 +153,8 @@ def main():
                 gap = "MISSING_TABLE_SRC"; gaps[gap] += 1
             else:
                 tracked = catalog[(sch, tbl)]
-                istat = ("Done" if (t != "cdc" or tracked) else "Not started")
+                # cdc table reachable but CDC not enabled -> the sheet's special status
+                istat = ("Done" if (t != "cdc" or tracked) else "Read granted, but no CDC")
             if istat:
                 dist[istat] += 1
                 results.append({"r": r["r"], "f": r.get("f"), "t": t, "prop": {"I": istat}, "gap": None})
@@ -166,7 +167,7 @@ def main():
 
     # compact 'ci' encoding: one line per RESULT row 'r:Icode:gapcode'. Rows on
     # unreachable DBs (NO_ACCESS_DB) are only counted, not shipped (col I left).
-    IMAP = {"Done": "D", "Not started": "N"}
+    IMAP = {"Done": "D", "Read granted, but no CDC": "C", "Not started": "N"}
     GMAP = {"MISSING_TABLE_SRC": "M", "DB_ERR": "E"}
     lines = []
     for res in results:

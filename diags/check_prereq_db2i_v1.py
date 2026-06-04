@@ -140,7 +140,7 @@ def main():
                 jv = str(rec.get("JOURNALED", "")).strip().upper()
                 journaled = jv in ("YES", "Y", "1", "TRUE")
                 if t == "cdc":
-                    istat = "Done" if journaled else "Not started"
+                    istat = "Done" if journaled else "Read granted, but no CDC"
                 else:
                     istat = "Done"   # non-cdc: access is enough
         except Exception as e:

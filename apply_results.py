@@ -110,7 +110,7 @@ def find_latest_result(explicit=None, require_stage=None):
         base["stage_cols"] = {"K": "DBZ->RMQ", "M": "Create GP table",
                               "O": "IPC init load", "Q": "RMQ->GPSS", "S": "Data recon"}
     elif base.get("fmt") == "ci":     # compact Prerequisites (col I)
-        RIMAP = {"D": "Done", "N": "Not started", "_": ""}
+        RIMAP = {"D": "Done", "C": "Read granted, but no CDC", "N": "Not started", "_": ""}
         RGMAP = {"M": "MISSING_TABLE_SRC", "E": "DB_ERR", "_": None}
         lines = {}
         for ck in sorted(chunks):
