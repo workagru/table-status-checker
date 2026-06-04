@@ -268,7 +268,7 @@ def make_report(apply):
         rep = ss.worksheet(title); rep.clear()
     except Exception:
         rep = ss.add_worksheet(title=title, rows=max(50, len(out) + 5), cols=6)
-    rep.update(out, value_input_option="USER_ENTERED")
+    rep.update(out, value_input_option="RAW")   # RAW so '== ..' / '=' aren't treated as formulas
     print(f"report: wrote {len(findings)} findings to tab {title!r}")
 
 
