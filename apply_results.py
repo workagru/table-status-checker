@@ -81,7 +81,8 @@ def find_latest_result(explicit=None, require_stage=None):
                 if require_stage:
                     sc = payload.get("stage_cols") or {}
                     so = payload.get("stage_order") or ""   # compact (fmt=c1) GP probe
-                    if require_stage not in sc and require_stage not in so:
+                    fs = {"c1": "KMOQS", "ci": "I"}.get(payload.get("fmt", ""), "")
+                    if require_stage not in sc and require_stage not in so and require_stage not in fs:
                         continue
                 t = msg.get("time", "") or ""
                 by_run[payload.get("utc", "")][payload.get("chunk", 1)] = (t, payload)
@@ -107,6 +108,26 @@ def find_latest_result(explicit=None, require_stage=None):
         base["rows"] = [decode_line(ln, order) for ln in lines.values()]
         base["stage_cols"] = {"K": "DBZ->RMQ", "M": "Create GP table",
                               "O": "IPC init load", "Q": "RMQ->GPSS", "S": "Data recon"}
+    elif base.get("fmt") == "ci":     # compact Prerequisites (col I)
+        RIMAP = {"D": "Done", "N": "Not started", "_": ""}
+        RGMAP = {"M": "MISSING_TABLE_SRC", "E": "DB_ERR", "_": None}
+        lines = {}
+        for ck in sorted(chunks):
+            for ln in (chunks[ck][1].get("rows_str") or "").split("\n"):
+                ln = ln.strip()
+                if ln:
+                    try:
+                        lines[int(ln.split(":", 1)[0])] = ln
+                    except Exception:
+                        pass
+        out = []
+        for ln in lines.values():
+            parts = ln.split(":")
+            iv = RIMAP.get(parts[1] if len(parts) > 1 else "_", "")
+            out.append({"r": int(parts[0]), "prop": ({"I": iv} if iv else {}),
+                        "gap": RGMAP.get(parts[2] if len(parts) > 2 else "_")})
+        base["rows"] = out
+        base["stage_cols"] = {"I": "Prerequisites"}
     else:                             # verbose rows -> dedupe by sheet-row number
         merged = {}
         for ck in sorted(chunks):
