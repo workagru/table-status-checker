@@ -77,24 +77,36 @@ def main():
         print("GP connect FAILED:", e); return 1
     conn.autocommit = True
     cur = conn.cursor()
-    # latest run's verdict set per gp_table
-    cur.execute("""SELECT s.gp_table, r.verdict, r.started_at
+    # Per gp_table, take the LATEST RUN (by max started_at) and union ALL its
+    # test verdicts (t1/t2/t3). Grouping by single-row started_at lost a T1 DIFF
+    # when T2/T3 SKIPPED started later. enabled=1 = active schedule rows.
+    cur.execute("""SELECT s.gp_table, r.run_id, r.verdict, r.started_at
                    FROM recon_meta.recon_results r
-                   JOIN recon_meta.recon_schedule s ON s.id=r.schedule_id""")
-    latest = {}
-    for gp_table, verdict, started in cur.fetchall():
+                   JOIN recon_meta.recon_schedule s ON s.id=r.schedule_id
+                   WHERE s.enabled = 1""")
+    runv = defaultdict(set)          # (gp_table, run_id) -> verdicts
+    latest = {}                      # gp_table -> (max_started, run_id)
+    for gp_table, run_id, verdict, started in cur.fetchall():
         k = (gp_table or "").lower()
-        at, vs = latest.get(k, (None, set()))
-        if at is None or (started and started > at):
-            at, vs = started, {verdict}
-        elif started == at:
-            vs.add(verdict)
-        latest[k] = (at, vs)
+        runv[(k, run_id)].add(verdict)
+        if k not in latest or (started and started > latest[k][0]):
+            latest[k] = (started, run_id)
     cur.close(); conn.close()
 
-    code = {}
-    for k, (_, vs) in latest.items():
-        code[k] = ("D" if "DIFF" in vs else "P" if "PASS" in vs else "E" if "ERROR" in vs else "_")
+    code = {}; diff_tables = []
+    for k, (_, run_id) in latest.items():
+        vs = runv[(k, run_id)]
+        if "DIFF" in vs:
+            code[k] = "D"; diff_tables.append(k)
+        elif "PASS" in vs:
+            code[k] = "P"
+        elif "ERROR" in vs:
+            code[k] = "E"
+        else:
+            code[k] = "_"
+    print(f"active scheduled tables: {len(latest)}; DIFF (mismatch): {len(diff_tables)}")
+    for d in sorted(diff_tables):
+        print("   DIFF:", d)
 
     lines = []; dist = Counter()
     for r in rows:
