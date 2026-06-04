@@ -16,6 +16,7 @@ sheets-tool*.json
 # *_filled.py = probe with the work-list baked in (built by the generator)
 *_filled.py
 /tmp/
+logs/
 __pycache__/
 *.pyc
 .DS_Store
