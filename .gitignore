@@ -2,6 +2,11 @@
 gmail_send.py
 secrets.local.json
 secrets.local.*
+# consolidated local credentials file (shared with agents, never committed)
+CREDENTIALS.local.md
+*.local.md
+*credentials*
+*CREDENTIALS*
 # service-account / API keys (the real ones live OUTSIDE the repo)
 *service-account*.json
 sheets-tool*.json
