@@ -189,6 +189,71 @@ def coverage_missing(vals):
     return sorted(miss, key=lambda x: -x[1])
 
 
+def recon_finalize(apply):
+    """Re-derive Data reconciliation (col S) for EVERY row from the latest
+    recon check (fmt=rv) + the sheet's upstream stages, by the decision tree:
+      DIFF -> Discrepancies ; PASS -> Done ; else all-upstream(I/K/M/O/Q
+      non-N/A)-Done -> Ready ; else Not started.  Applies to all table types.
+      Canceled rows are left untouched."""
+    # find the latest recon (kind=recon) payload(s), merge chunks by utc
+    from collections import defaultdict, Counter
+    by_run = defaultdict(dict)
+    for fp in (os.path.join(WATCHER_DATA, "table_status.jsonl"),
+               os.path.join(WATCHER_DATA, "tech_channel.jsonl")):
+        if not os.path.isfile(fp):
+            continue
+        for line in open(fp, encoding="utf-8", errors="replace"):
+            if MARK_BEGIN not in line:
+                continue
+            try:
+                msg = json.loads(line)
+                seg = html.unescape(msg["text"].split(MARK_BEGIN, 1)[1].split(MARK_END, 1)[0].strip())
+                p = json.loads(seg)
+                if p.get("kind") != "recon":
+                    continue
+                by_run[p.get("utc", "")][p.get("chunk", 1)] = (msg.get("time", ""), p)
+            except Exception:
+                continue
+    if not by_run:
+        print("recon-finalize: no recon result captured"); return
+    run = max(by_run, key=lambda u: max(t for t, _ in by_run[u].values()))
+    codes = {}
+    for ck in sorted(by_run[run]):
+        for ln in (by_run[run][ck][1].get("rows_str") or "").split("\n"):
+            ln = ln.strip()
+            if ln and ":" in ln:
+                r, c = ln.split(":", 1); codes[int(r)] = c
+
+    gc = gspread.service_account(filename=CREDENTIALS)
+    ws = gc.open_by_key(SPREADSHEET_ID).worksheet(SHEET)
+    vals = ws.get_all_values()
+    UP = [8, 10, 12, 14, 16]   # I,K,M,O,Q
+    updates = []; dist = Counter()
+    for i, row in enumerate(vals[1:], start=2):
+        def g(idx):
+            return row[idx].strip() if idx < len(row) else ""
+        stages = [g(x) for x in (8, 10, 12, 14, 16, 18)]
+        if any(v.lower() == "canceled" for v in stages):
+            continue
+        c = codes.get(i)
+        if c == "D":
+            s = "Discrepancies"
+        elif c == "P":
+            s = "Done"
+        else:
+            nn = [g(idx) for idx in UP if g(idx).lower() != "n/a"]
+            s = "Ready" if (nn and all(v.lower() == "done" for v in nn)) else "Not started"
+        if s != g(18):
+            updates.append({"range": f"S{i}", "values": [[s]]})
+        dist[s] += 1
+    print(f"recon-finalize: target S distribution {dict(dist)}; {len(updates)} cells to change")
+    if apply and updates:
+        ws.batch_update(updates, value_input_option="RAW")
+        print("  written.")
+    elif not apply:
+        print("  (dry — pass --apply to write)")
+
+
 def make_report(apply):
     """Write an 'Auto-check report' tab from the latest GP result: a summary
     + SHEET_AHEAD findings + no-access source DBs + tables missing in source."""
@@ -318,10 +383,14 @@ def main():
                     help="apply the cdc 'Ready' rule and exit")
     ap.add_argument("--require", help="only accept a result whose stage_cols has this key (M=GP probe, I=prereq)")
     ap.add_argument("--report", action="store_true", help="write the Auto-check report tab and exit")
+    ap.add_argument("--recon", action="store_true", help="re-derive Data reconciliation (col S) by the tree and exit")
     args = ap.parse_args()
 
     if args.finalize:
         finalize_recon(args.apply)
+        return
+    if args.recon:
+        recon_finalize(args.apply)
         return
     if args.report:
         make_report(args.apply)
