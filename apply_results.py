@@ -464,14 +464,10 @@ def main():
         return
 
     # ---- backup ----
+    # BAK tabs disabled (user 2026-06-04): rely on Google Sheets version history
+    # (File > Version history) for recovery instead of cluttering the workbook.
     if args.backup:
-        stamp = time.strftime("%Y%m%d-%H%M", time.gmtime())
-        name = f"BAK {SHEET} {stamp}"
-        try:
-            ss.duplicate_sheet(ws.id, new_sheet_name=name)
-            print(f"[backup] duplicated tab -> {name!r}")
-        except Exception as e:
-            print(f"[backup] FAILED ({e}) — aborting write to stay safe"); return
+        print("[backup] BAK tabs disabled — use Google Sheets version history to revert")
 
     # ---- build batch update (status columns only; Responsible never touched) ----
     updates = []
