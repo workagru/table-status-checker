@@ -18,12 +18,12 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/tester/table-status-checker/run_cycle.py</string>
+        <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/table-status-checker/run_cycle.py</string>
         <string>--run</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/tester/table-status-checker</string>
+    <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/table-status-checker</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -37,9 +37,9 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/tester/table-status-checker/logs/cycle.out.log</string>
+    <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/table-status-checker/logs/cycle.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/tester/table-status-checker/logs/cycle.err.log</string>
+    <string>/Users/alexandrgruzdev/Downloads/SIMAH/claude playgraund/table-status-checker/logs/cycle.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

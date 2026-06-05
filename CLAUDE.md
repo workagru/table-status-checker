@@ -8,6 +8,17 @@ This is its **own** project/repo, deliberately separate from the shared
 `claude-vdi-handoff` tooling repo (another session edits that one). We keep
 our own copies of the bridge tools here so the two don't collide.
 
+## Location & layout (moved out of `tester/` on 2026-06-05)
+This project now lives at `~/Downloads/SIMAH/claude playgraund/table-status-checker`
+(a sibling of `tester/`), so it no longer inherits the SIMAH Auto-Recon
+autotester's root `CLAUDE.md`/memory. **Open THIS folder as the Claude Code
+workspace.** The capture tool **`teams-channel-watcher` stays in `tester/`**
+(it's shared infra — the autotester reads it too). Because it's no longer a
+sibling, the absolute path to its capture dir is set in **`config.local.json`**
+(gitignored): `{"watcher_data": ".../tester/teams-channel-watcher/data"}` —
+`apply_results.py` / `run_cycle.py` read it (fallback: `../teams-channel-watcher`).
+See `config.example.json`.
+
 ## Communication
 - **Russian** to the user (Alexander Gruzdev). **English** for
   code/comments/commits/CLI.
