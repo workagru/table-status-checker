@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy to config.local.json (gitignored) and set per-machine paths. watcher_data = absolute path to the SHARED teams-channel-watcher capture dir (the local Chrome-extension server writes <slug>.jsonl there). Set this when this project does NOT sit as a sibling of teams-channel-watcher.",
+  "watcher_data": "/Users/you/path/to/teams-channel-watcher/data"
+}

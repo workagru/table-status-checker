@@ -30,7 +30,25 @@ SPREADSHEET_ID = "1qoswNdf61-EdNFPF0wgQc2f7cgAeSvkc-CBYQ2rKZis"
 SHEET = "2 Table Status"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-WATCHER_DATA = os.path.abspath(os.path.join(HERE, "..", "teams-channel-watcher", "data"))
+
+
+def _watcher_data():
+    """Path to the captured Teams JSONL. teams-channel-watcher is SHARED infra
+    that stays put when this project moves -> allow an absolute override in
+    config.local.json {'watcher_data': '/abs/.../teams-channel-watcher/data'};
+    fall back to the legacy sibling layout."""
+    cfg = os.path.join(HERE, "config.local.json")
+    if os.path.isfile(cfg):
+        try:
+            v = (json.load(open(cfg)) or {}).get("watcher_data")
+            if v:
+                return os.path.expanduser(v)
+        except Exception:
+            pass
+    return os.path.abspath(os.path.join(HERE, "..", "teams-channel-watcher", "data"))
+
+
+WATCHER_DATA = _watcher_data()
 STATE_DIR = os.path.join(HERE, "state")
 MARK_BEGIN, MARK_END = "===RESULTS_JSON_BEGIN===", "===RESULTS_JSON_END==="
 

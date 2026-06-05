@@ -2,6 +2,8 @@
 gmail_send.py
 secrets.local.json
 secrets.local.*
+# per-machine paths (absolute watcher_data, etc.) — see config.example.json
+config.local.json
 # consolidated local credentials file (shared with agents, never committed)
 CREDENTIALS.local.md
 *.local.md

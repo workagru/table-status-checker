@@ -29,7 +29,21 @@ CRED = "/Users/alexandrgruzdev/Downloads/sheets-tool-498316-6a47b98b256f.json"
 SID = "1qoswNdf61-EdNFPF0wgQc2f7cgAeSvkc-CBYQ2rKZis"
 SHEET = "2 Table Status"
 STATE_PATH = os.path.join(HERE, "state", "table_status_state.json")
-WATCHER_DATA = os.path.abspath(os.path.join(HERE, "..", "teams-channel-watcher", "data"))
+
+
+def _watcher_data():
+    cfg = os.path.join(HERE, "config.local.json")
+    if os.path.isfile(cfg):
+        try:
+            v = (json.load(open(cfg)) or {}).get("watcher_data")
+            if v:
+                return os.path.expanduser(v)
+        except Exception:
+            pass
+    return os.path.abspath(os.path.join(HERE, "..", "teams-channel-watcher", "data"))
+
+
+WATCHER_DATA = _watcher_data()
 GMAIL = os.path.join(HERE, "gmail_send.py")
 DIAGS = os.path.join(HERE, "diags")
 MARK_BEGIN = "===RESULTS_JSON_BEGIN==="
