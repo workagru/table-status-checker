@@ -197,13 +197,42 @@ cd ../teams-channel-watcher && python3 get_messages.py --channel "tech channel" 
 | GP-side discovery | `diags/discover_table_status_meta_v1.py` |
 | Source-side discovery | `diags/discover_source_prereq_cdc_v1.py` |
 | GP dry-run checker | `diags/check_table_status_dryrun_v2.py` |
-| Teams reader | `../teams-channel-watcher/` |
+| Teams reader | shared `teams-channel-watcher` in `tester/`; path via `config.local.json` |
+| Mac-side writer | `apply_results.py` (`--require I/M`, `--stages`, `--recon`) |
+| Table type sync | `update_table_type.py` (col H from `1 UC-WF-Table`) |
+| Scheduled cycle | `run_cycle.py` (stateful delta) + `com.simah.tablestatus.plist` |
+| Report tab writer | `make_session_report.py` (-> 'Auto-check report' tab) |
 | GP UAT | `grnplumvipuat.ksacb.com.sa:5442` `simah_test` `gpadmin/gpadmin` |
 
-## Status (2026-06-03)
-Discovery done; dry-run **v2** validated the matrix on all 1231 rows.
-AGREE/CONFLICT works; partition fix works. Next: drop auto-alias guessing
-(v3 = strict col-E + richer gap report), confirm a few user-supplied schema
-aliases, then build the **Mac-side batch writer** and put it on a schedule.
-Open: explicit init-load meta-attribute? meaning of `WFP`? dedicated Teams
-channel for this checker's output.
+## Status / "you are here" (2026-06-05)
+**Project relocated** out of `tester/` to its own folder (see Location & layout
+above) — open THIS folder as the workspace.
+
+**All stage columns freshly computed from GP/source and written to the sheet:**
+- **H Table type** — synced from authoritative `1 UC-WF-Table` (405 fixes;
+  369 mislabeled cdc -> lookup/inter). Now cdc 319 / lookup 320 / inter 592.
+- **I Prerequisites** — Done 747, 'Read granted, but no CDC' 60, blank 390.
+  MSSQL via the VDI's installed `{SQL Server}` ODBC driver (NOT ODBC 17/18) +
+  `db_aliases.json` (SIMAT_B2C* -> UAT_B2C*).
+- **M Create GP table** — Done 261.
+- **K/Q** — N/A for the 903 non-cdc rows (cdc-only stages). **O** re-derived.
+- **S Data recon** — recon tree (`--recon`): Discrepancies 102 / Done 39 /
+  Ready 27 / Not started 1041.
+- **'Auto-check report' tab** written (`make_session_report.py`).
+
+**Scheduling built, NOT yet enabled:** `run_cycle.py` (stateful delta — skip a
+stage only when sheet==terminal-OK AND state==same; cdc=all stages, lookup/
+inter=I,M,O; recon always re-read). Recommended runner = a **Desktop local
+routine** (Claude Code Desktop -> Routines -> Local) pointing here, daily 03:00,
+prompt "run `run_cycle.py --run`, then summarise the report + flag anomalies".
+Cloud `/schedule` routines DON'T work (no local-file access). `launchd` plist is
+a script-only fallback. Requires the capture Chrome (Teams 'table status' tab)
+open + the VDI watcher alive.
+
+**Open blockers (external, see report tab):**
+- **Sybase SIMAHDWH (78 rows)** — TCP-reachable + DataDirect ODBC syntax OK,
+  but `28000 Login Failed`; need correct creds (probe = `check_prereq_sybase_v4`).
+- **firewall (6 hosts)**: DBSIMAHUAT1, DBUATCJ2:1451/1452/1453, DEVDB01, TRUAT01
+  — open access from the VDI subnet.
+- **EDWH** visible but USE denied (DBA grant). **SIMAH_UNIFIED** DB down.
+  **SIMAH_MSCRM** — no db of that name on DBUATCJ2:1450 (need real name).
