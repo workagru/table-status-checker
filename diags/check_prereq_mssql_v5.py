@@ -34,6 +34,17 @@ if os.path.isdir(RUNTIME) and RUNTIME not in sys.path:
 WORKLIST_B64 = "__WORKLIST_B64__"
 WEBHOOK = "__WEBHOOK__"
 MSSQL_CREDS_JSON = "__MSSQL_CREDS_JSON__"
+TUNNEL_MAP_JSON = "__TUNNEL_MAP_JSON__"     # {"host:port": local_port} routed via ssh bridge
+BRIDGE_PWD = "__BRIDGE_PWD__"               # ssh password for plink (debapp@bridge)
+PLINK_PATH = r"C:\PuTTY\plink.exe"
+BRIDGE_HOST = "10.0.135.81"
+BRIDGE_USER = "debapp"
+try:
+    _TUNNELS = json.loads(TUNNEL_MAP_JSON) if isinstance(TUNNEL_MAP_JSON, str) else {}
+    _TUNNELS = {k.lower(): int(v) for k, v in (_TUNNELS or {}).items()}
+except Exception:
+    _TUNNELS = {}
+_PLINK_PROC = None
 DB_ALIAS_JSON = "__DB_ALIAS_JSON__"
 try:
     EXTRA = json.loads(MSSQL_CREDS_JSON)
@@ -77,8 +88,82 @@ def post_card(title, body, url):
         return resp.status
 
 
+def effective_endpoint(server, port):
+    """If (server,port) is tunnelled via the ssh bridge, rewrite to localhost:NNNNN."""
+    key = f"{(server or '').lower()}:{int(port or 0)}"
+    if key in _TUNNELS:
+        return ("127.0.0.1", _TUNNELS[key])
+    return (server, port)
+
+
+def start_tunnels():
+    """Spawn one plink process with all `-L` forwards. Idempotent. Waits ≤10s
+    for each local port to accept connects before returning. No-op when the
+    map is empty or plink/password is missing (probe falls back to direct)."""
+    global _PLINK_PROC
+    if _PLINK_PROC is not None or not _TUNNELS:
+        return
+    import subprocess as _sp, socket as _so
+    if not os.path.isfile(PLINK_PATH) or not BRIDGE_PWD or BRIDGE_PWD.startswith("__"):
+        print(f"[tunnel] skip: plink={os.path.isfile(PLINK_PATH)} pwd_set={bool(BRIDGE_PWD and not BRIDGE_PWD.startswith('__'))}")
+        return
+    args = [PLINK_PATH, "-batch", "-ssh", "-l", BRIDGE_USER, "-pw", BRIDGE_PWD, "-N"]
+    for k, lp in _TUNNELS.items():
+        host, port = k.rsplit(":", 1)
+        args += ["-L", f"{lp}:{host}:{port}"]
+    args.append(BRIDGE_HOST)
+    print(f"[tunnel] starting plink with {len(_TUNNELS)} forwards")
+    flags = getattr(_sp, "CREATE_NO_WINDOW", 0)
+    try:
+        _PLINK_PROC = _sp.Popen(args, stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE,
+                                creationflags=flags)
+    except Exception as e:
+        print(f"[tunnel] spawn FAIL: {type(e).__name__}: {e}")
+        _PLINK_PROC = None
+        return
+    deadline = time.time() + 10
+    up = 0
+    for _, lp in _TUNNELS.items():
+        while time.time() < deadline:
+            if _PLINK_PROC.poll() is not None:
+                so, se = _PLINK_PROC.communicate(timeout=1)
+                print(f"[tunnel] plink died rc={_PLINK_PROC.returncode}")
+                print(f"  stderr: {(se or b'').decode(errors='replace')[:400]}")
+                _PLINK_PROC = None
+                return
+            s = _so.socket(_so.AF_INET, _so.SOCK_STREAM); s.settimeout(0.5)
+            try:
+                rc = s.connect_ex(("127.0.0.1", lp))
+                s.close()
+                if rc == 0:
+                    up += 1; break
+            except Exception:
+                pass
+            time.sleep(0.3)
+    print(f"[tunnel] {up}/{len(_TUNNELS)} forwards ready  pid={_PLINK_PROC.pid}")
+    import atexit
+    atexit.register(stop_tunnels)
+
+
+def stop_tunnels():
+    global _PLINK_PROC
+    if _PLINK_PROC is None:
+        return
+    try:
+        _PLINK_PROC.terminate()
+        try:
+            _PLINK_PROC.wait(timeout=3)
+        except Exception:
+            _PLINK_PROC.kill()
+            _PLINK_PROC.wait(timeout=3)
+    except Exception:
+        pass
+    _PLINK_PROC = None
+
+
 def conn_str(spec, database):
-    server = f"{spec['server']},{spec['port']}" if spec.get('port') else spec['server']
+    h, p = effective_endpoint(spec['server'], spec.get('port'))
+    server = f"{h},{p}" if p else h
     return ";".join([f"DRIVER={{{spec['driver']}}}", f"SERVER={server}", f"DATABASE={database}",
                      f"UID={spec['user']}", f"PWD={spec['password']}",
                      f"Encrypt={spec.get('encrypt', 'no')}",
@@ -88,7 +173,8 @@ def conn_str(spec, database):
 
 def main():
     utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-    print(f"check_prereq_mssql v5 @ {utc}  (db_aliases={len(DB_ALIAS)})")
+    print(f"check_prereq_mssql v5 @ {utc}  (db_aliases={len(DB_ALIAS)}, tunnels={len(_TUNNELS)})")
+    start_tunnels()
     rows = json.loads(base64.b64decode(WORKLIST_B64.encode()).decode("utf-8"))
     try:
         import pyodbc

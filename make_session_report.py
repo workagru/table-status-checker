@@ -19,24 +19,30 @@ SID = "1qoswNdf61-EdNFPF0wgQc2f7cgAeSvkc-CBYQ2rKZis"
 SHEET = "2 Table Status"
 REPORT = "Auto-check report"
 
-# source DBs unreachable from the VDI by firewall (TCP filtered, verified 2026-06-04)
-FIREWALL = {"enquiry", "identity", "instantupdate", "moarif", "leiportal",
-            "linq2simah", "linq2simah_clone", "ksapoc", "identitylei", "ksatr"}
+# source DBs unreachable EITHER from the VDI directly OR from the ssh-bridge
+# (10.0.135.81). DBUATCJ2:1451/1452/1453 and TRUAT01:1450 are now reachable
+# via the ssh-bridge tunnel and resolve cleanly — they're NOT firewalled anymore.
+# Verified 2026-06-07: only DBSIMAHUAT1 and DEVDB01 stay truly unreachable.
+FIREWALL = {"moarif", "leiportal", "linq2simah", "linq2simah_clone", "ksapoc", "identitylei"}
 
-# verified VDI reachability (raw TCP + ODBC), 2026-06-04
+# verified reachability (raw TCP + ODBC). VDI = direct from agruzdev@VDI11-VENDOR20
+# (10.0.220.28); bridge = via ssh-tunnel debapp@10.0.135.81 (GP coordinator).
 REACH = [
-    ["10.0.135.37:1450 (molim)", "OPEN", "OK", "MOLIM_*"],
-    ["BMSERV01:1450 (benchmark)", "OPEN", "OK", "Benchmark_*"],
-    ["INFUATHQSQL:1450", "OPEN", "OK", "INFA_MFT_STAGE"],
-    ["DATAHUBDEV01:1450", "OPEN", "OK", "HUB, POOL"],
-    ["DBUATCJ2:1450", "OPEN", "OK", "UAT_B2C* (+ AMSConsumer); sheet SIMAT_B2C* are aliases"],
-    ["DQUATIDQ:1450", "OPEN", "OK", "SIMAHDQ, SIMAHDQ_REP; EDWH visible but USE denied"],
-    ["DBMSTRUAT:1450", "OPEN", "FAIL 08001", "SIMAH_UNIFIED — port up, SQL fails (DB down)"],
+    ["10.0.135.37:1450 (molim)", "OPEN/VDI", "OK", "MOLIM_*"],
+    ["BMSERV01:1450 (benchmark)", "OPEN/VDI", "OK", "Benchmark_*"],
+    ["INFUATHQSQL:1450", "OPEN/VDI", "OK", "INFA_MFT_STAGE"],
+    ["DATAHUBDEV01:1450", "OPEN/VDI", "OK", "HUB, POOL"],
+    ["DBUATCJ2:1450", "OPEN/VDI", "OK", "UAT_B2C* (+ AMSConsumer); sheet SIMAT_B2C* are aliases"],
+    ["DQUATIDQ:1450", "OPEN/VDI", "OK", "SIMAHDQ, SIMAHDQ_REP; EDWH visible but USE denied"],
+    ["DBMSTRUAT:1450", "OPEN/VDI", "FAIL 18456", "SIMAH_UNIFIED — login rejected server-side (creds problem, NOT DB down)"],
+    ["DBUATCJ2:1451 (InstantUpdate)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31451"],
+    ["DBUATCJ2:1452 (Identity)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31452"],
+    ["DBUATCJ2:1453 (Enquiry)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31453"],
+    ["TRUAT01:1450 (KSATR)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31454"],
+    ["10.0.135.20:1433 (UAT CRM)", "TUNNEL/.81", "OK", "SIMAH_MSCRM — via ssh-bridge -> localhost:31455"],
     ["DBSIMAHUAT1:1450", "FILTERED", "—", "firewall: Moarif, LEIPortal, LINQ2SIMAH, KSAPOC"],
-    ["DBUATCJ2:1451/1452/1453", "FILTERED", "—", "firewall: InstantUpdate / Identity / Enquiry"],
     ["DEVDB01:1450", "FILTERED", "—", "firewall: IdentityLei"],
-    ["TRUAT01:1450", "FILTERED", "—", "firewall: KSATR"],
-    ["SYBDWHUATHQ:5000 (Sybase)", "see probe", "pending", "SIMAHDWH — ODBC DataDirect; JDBC jar absent"],
+    ["SYBDWHUATHQ:5000 (Sybase)", "OPEN/VDI", "pending", "SIMAHDWH — needs valid Sybase creds"],
 ]
 ALIASES = [
     ["SIMAT_B2CEnquiry", "UAT_B2CEnquiry"], ["SIMAT_B2CFinance", "UAT_B2CFinance"],
@@ -45,11 +51,11 @@ ALIASES = [
     ["SIMAT_B2CCreditScore", "UAT_B2CCreditScore"],
 ]
 ACTIONS = [
-    ["network", "Open firewall from VDI subnet to: DBSIMAHUAT1, DBUATCJ2:1451/1452/1453, DEVDB01, TRUAT01 (1450)"],
-    ["DBA", "Grant gpuatsrvusr access (USE) to EDWH on DQUATIDQ:1450 (visible but denied)"],
-    ["DBA", "Bring SIMAH_UNIFIED up on DBMSTRUAT:1450 (port open, DB down)"],
-    ["you (owner)", "Confirm real db name for SIMAH_MSCRM (no such db on DBUATCJ2:1450)"],
-    ["checker", "SIMAHDWH (Sybase): finish ODBC DataDirect connect (probe v3)"],
+    ["network", "Open firewall from UAT GP cluster + VDI subnets to DBSIMAHUAT1:1450 and DEVDB01:1450 (other earlier targets now covered by ssh-bridge tunnel)"],
+    ["DBA", "Grant gpuatsrvusr USE permission on EDWH at DQUATIDQ:1450 (visible but denied)"],
+    ["DBA", "Reset / re-enable SQL login gpuatsrvusr on DBMSTRUAT:1450 (server returns 28000/18456 — login rejected, NOT a DB-availability issue)"],
+    ["checker", "SIMAHDWH (Sybase): provide working creds — current ones get 28000 Login Failed via DataDirect ODBC"],
+    ["checker", "Add MSSQL creds for SIMAHDQ / HUB / POOL / leid / Molim_Enquiry (servers reachable from VDI, just no profile yet)"],
 ]
 
 
@@ -78,11 +84,11 @@ def main():
             continue
         db = g(2); dl = db.lower(); sysn = g(0).upper()
         blank_db[db] += 1
-        if dl == "simahdwh": reason["Sybase SIMAHDWH (ODBC probe in progress)"] += 1
+        if dl == "simahdwh": reason["Sybase SIMAHDWH (working creds pending)"] += 1
         elif dl == "edwh": reason["PERM — EDWH visible but USE denied (DBA grant)"] += 1
-        elif dl == "simah_mscrm": reason["NOTFOUND — SIMAH_MSCRM (real db name unknown)"] += 1
-        elif dl == "simah_unified": reason["SIMAH_UNIFIED on DBMSTRUAT (DB down)"] += 1
-        elif dl in FIREWALL: reason["firewall — 6 hosts unreachable from VDI"] += 1
+        elif dl == "simah_mscrm": reason["SIMAH_MSCRM — bridge route, awaiting next cycle"] += 1
+        elif dl == "simah_unified": reason["SIMAH_UNIFIED login rejected on DBMSTRUAT (28000/18456 — DBA reset)"] += 1
+        elif dl in FIREWALL: reason["firewall — DBSIMAHUAT1 / DEVDB01 unreachable (network tkt open)"] += 1
         elif "DB2" in sysn or dl == "b7031210": reason["DB2i (outside the MSSQL probe)"] += 1
         else: reason["table not found in source DB / other"] += 1
 

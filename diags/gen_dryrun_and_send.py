@@ -124,7 +124,21 @@ def main():
         filled = filled.replace('"__MSSQL_CREDS_JSON__"', json.dumps(json.dumps(creds)))
         print(f"injected {len(creds)} mssql creds")
 
-    # 5) inject DB-name aliases (sheet Source-Database -> real server db name)
+    # 5) inject the SSH bridge password (if the probe drives ssh into the GP cluster)
+    if '"__BRIDGE_PWD__"' in filled:
+        pwd = load_secret("ssh_bridge_pwd")
+        if not pwd:
+            sys.exit("probe needs ssh_bridge_pwd in secrets.local.json")
+        filled = filled.replace('"__BRIDGE_PWD__"', json.dumps(pwd))
+        print(f"injected ssh_bridge_pwd (len={len(pwd)})")
+
+    # 5b) inject tunnel map (host:port -> local_port) for ssh-bridged endpoints
+    if '"__TUNNEL_MAP_JSON__"' in filled:
+        tmap = load_secret("tunnel_map") or {}
+        filled = filled.replace('"__TUNNEL_MAP_JSON__"', json.dumps(json.dumps(tmap)))
+        print(f"injected tunnel_map ({len(tmap)} forwards)")
+
+    # 6) inject DB-name aliases (sheet Source-Database -> real server db name)
     if '"__DB_ALIAS_JSON__"' in filled:
         dp = os.path.join(REPO_ROOT, "db_aliases.json")
         dmap = {k: v for k, v in (json.load(open(dp)).items() if os.path.isfile(dp) else [])

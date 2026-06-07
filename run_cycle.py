@@ -126,6 +126,11 @@ def fill_and_send(template_name, subject, worklist):
         dp = os.path.join(HERE, "db_aliases.json")
         dmap = {k: v for k, v in (json.load(open(dp)).items() if os.path.isfile(dp) else []) if not k.startswith("_")}
         src = src.replace('"__DB_ALIAS_JSON__"', json.dumps(json.dumps(dmap)))
+    if '"__BRIDGE_PWD__"' in src:
+        src = src.replace('"__BRIDGE_PWD__"', json.dumps(_load_secret("ssh_bridge_pwd") or ""))
+    if '"__TUNNEL_MAP_JSON__"' in src:
+        tmap = _load_secret("tunnel_map") or {}
+        src = src.replace('"__TUNNEL_MAP_JSON__"', json.dumps(json.dumps(tmap)))
     out = f"/tmp/{subject}_filled.py"
     open(out, "w", encoding="utf-8").write(src)
     subprocess.run([sys.executable, GMAIL, out, "--to", "agruzdev@simah.com",

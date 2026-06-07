@@ -204,35 +204,68 @@ cd ../teams-channel-watcher && python3 get_messages.py --channel "tech channel" 
 | Report tab writer | `make_session_report.py` (-> 'Auto-check report' tab) |
 | GP UAT | `grnplumvipuat.ksacb.com.sa:5442` `simah_test` `gpadmin/gpadmin` |
 
-## Status / "you are here" (2026-06-05)
+## Status / "you are here" (2026-06-07)
 **Project relocated** out of `tester/` to its own folder (see Location & layout
 above) — open THIS folder as the workspace.
 
-**All stage columns freshly computed from GP/source and written to the sheet:**
-- **H Table type** — synced from authoritative `1 UC-WF-Table` (405 fixes;
-  369 mislabeled cdc -> lookup/inter). Now cdc 319 / lookup 320 / inter 592.
-- **I Prerequisites** — Done 747, 'Read granted, but no CDC' 60, blank 390.
-  MSSQL via the VDI's installed `{SQL Server}` ODBC driver (NOT ODBC 17/18) +
-  `db_aliases.json` (SIMAT_B2C* -> UAT_B2C*).
-- **M Create GP table** — Done 261.
-- **K/Q** — N/A for the 903 non-cdc rows (cdc-only stages). **O** re-derived.
-- **S Data recon** — recon tree (`--recon`): Discrepancies 102 / Done 39 /
-  Ready 27 / Not started 1041.
-- **'Auto-check report' tab** written (`make_session_report.py`).
+### ssh-bridge via plink (added 2026-06-07)
+For source servers the VDI cannot reach directly (firewall), the prereq probe
+opens an ssh tunnel through GP coordinator node `debapp@10.0.135.81` using
+`C:\PuTTY\plink.exe -L localport:remote:port -N` and rewrites endpoints to
+`localhost:NNNNN` at connect time. Zero installs on .81, no `authorized_keys`
+trace — plink dies at probe end via `atexit` / `_stop_tunnels()`.
 
-**Scheduling built, NOT yet enabled:** `run_cycle.py` (stateful delta — skip a
-stage only when sheet==terminal-OK AND state==same; cdc=all stages, lookup/
-inter=I,M,O; recon always re-read). Recommended runner = a **Desktop local
-routine** (Claude Code Desktop -> Routines -> Local) pointing here, daily 03:00,
-prompt "run `run_cycle.py --run`, then summarise the report + flag anomalies".
-Cloud `/schedule` routines DON'T work (no local-file access). `launchd` plist is
-a script-only fallback. Requires the capture Chrome (Teams 'table status' tab)
+Knobs in `secrets.local.json` (gitignored):
+- `ssh_bridge_pwd` — debapp password
+- `tunnel_map` — `{"host:port": local_port}` for every endpoint to bridge
+
+`gen_dryrun_and_send.py` + `run_cycle.py` inject `__BRIDGE_PWD__` /
+`__TUNNEL_MAP_JSON__` only into probes that have those placeholders
+(currently `check_prereq_mssql_v5.py`). Empty map = degraded mode, identical
+to pre-bridge behavior.
+
+Active bridges (2026-06-07):
+| local | remote | covers |
+|---|---|---|
+| 31451 | DBUATCJ2:1451 | InstantUpdate |
+| 31452 | DBUATCJ2:1452 | Identity |
+| 31453 | DBUATCJ2:1453 | Enquiry |
+| 31454 | TRUAT01:1450 | KSATR |
+| 31455 | 10.0.135.20:1433 | SIMAH_MSCRM (UAT CRM) |
+
+### Stage columns (latest cycle, 2026-06-07 with tunnel):
+- **Prerequisites (I)** — Done 855 / blank 271 / 'Read granted, no CDC' 82 /
+  Canceled 22. (+108 Done vs pre-tunnel run via the 5 bridges.)
+- **Create GP table (M)** — Done 261 / Not started 962 / Canceled 8.
+- **DBZ→RMQ (K) / RMQ→GPSS (Q)** — N/A for the 903 non-cdc rows.
+- **Data reconciliation (S)** — Discrepancies 93 / Ready 57 / Done 9 /
+  Not started 1050 / Canceled 22.
+- **'Auto-check report'** tab refreshed at every cycle end.
+
+### Scheduling — built, NOT yet enabled
+`run_cycle.py` (stateful delta — skip a stage only when sheet==terminal-OK
+AND state==same; cdc=all stages, lookup/inter=Prereq+Create+IPC only; recon
+always re-read). Recommended runner = a **Desktop local routine** (Claude
+Code Desktop -> Routines -> Local) pointing here, daily 03:00, prompt "run
+`run_cycle.py --run`, then summarise the report + flag anomalies". Cloud
+`/schedule` routines DON'T work (no local-file access). `launchd` plist is a
+script-only fallback. Requires the capture Chrome (Teams 'table status' tab)
 open + the VDI watcher alive.
 
-**Open blockers (external, see report tab):**
-- **Sybase SIMAHDWH (78 rows)** — TCP-reachable + DataDirect ODBC syntax OK,
-  but `28000 Login Failed`; need correct creds (probe = `check_prereq_sybase_v4`).
-- **firewall (6 hosts)**: DBSIMAHUAT1, DBUATCJ2:1451/1452/1453, DEVDB01, TRUAT01
-  — open access from the VDI subnet.
-- **EDWH** visible but USE denied (DBA grant). **SIMAH_UNIFIED** DB down.
-  **SIMAH_MSCRM** — no db of that name on DBUATCJ2:1450 (need real name).
+### Open blockers (external, see report tab):
+- **firewall (2 hosts, was 6):** **DBSIMAHUAT1:1450**
+  (Moarif / LEIPortal / LINQ2SIMAH / KSAPOC) and **DEVDB01:1450**
+  (IdentityLei). The other 4 originally firewalled hosts are now covered by
+  the ssh-bridge tunnel — drop them from any open network ticket.
+- **SIMAH_UNIFIED on DBMSTRUAT (67 rows)** — server up, login `gpuatsrvusr`
+  rejected `28000 / 18456` against `master` AND target DB AND no-database
+  connect. NOT a DB-availability problem (earlier "DB down" classification
+  was wrong). DBA needs to check `gpuatsrvusr` on that instance — likely
+  dropped or disabled. State 38 vs 1/7/8 invisible via legacy `{SQL Server}`
+  driver.
+- **Sybase SIMAHDWH (78 rows)** — TCP-reachable, ODBC DataDirect syntax OK,
+  but `28000 Login Failed`; needs correct creds.
+- **EDWH on DQUATIDQ:1450 (71 rows)** — visible but `USE` denied → DBA grant.
+- **NO_PROFILE (96 rows)** — SIMAHDQ / HUB / POOL / SIMAHDQ_REP / leid /
+  Molim_Enquiry. Servers reachable from VDI, creds just missing from
+  `secrets.local.json::mssql_creds`. Quick win when owner provides them.
