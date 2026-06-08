@@ -204,7 +204,42 @@ cd ../teams-channel-watcher && python3 get_messages.py --channel "tech channel" 
 | Report tab writer | `make_session_report.py` (-> 'Auto-check report' tab) |
 | GP UAT | `grnplumvipuat.ksacb.com.sa:5442` `simah_test` `gpadmin/gpadmin` |
 
-## Status / "you are here" (2026-06-07)
+## Policy (user, 2026-06-08): **GP is the single source of truth**
+Status of every row is taken from the GP cluster, not from the source MSSQL.
+Practical implications:
+
+- The **canonical check** for whether a row is "alive" runs against GP
+  (`grnplumvipuat:5442 simah_test`) — `information_schema.tables` for the
+  paired `lz_psa_<src>` / `lz_stream_<src>` schemas, then `recon_meta`
+  for verdicts. If GP has the landing table populated, the source-side
+  prerequisites were met by definition — don't refight the source-side
+  check just to confirm.
+- The source-side prereq probe (`check_prereq_mssql_v5.py`) is now a
+  **diagnostic for the gap report only**: when GP says "no table" (i.e.
+  `NO_TABLE_GP`), the source-side prereq decides whether it's blocked on
+  access (gap = `NO_ACCESS_DB` / `NO_PROFILE` / `NO_CREDS` / `MISSING_TABLE_SRC`)
+  or just not yet landed. It must never override a GP "Done".
+- For the ddl-generator project: if a table is needed and exists in GP's
+  landing layer, take the column spec from GP, not from source. Source-side
+  is only used when GP has nothing.
+- This is a deliberate inversion of the older "source-first, GP-second"
+  reading. It's grounded in real friction: source-side hits firewalls,
+  DBA-pending grants, dropped logins (DBMSTRUAT/SIMAH_UNIFIED 18456), bad
+  schema/db labels in the sheet — none of that matters once data lands.
+
+## Credentials note
+`secrets.local.json` is gitignored. As of 2026-06-08 it holds:
+- `mssql_creds` — 28 entries covering 13 (server,port) pairs. Most servers
+  share `gpuatsrvusr / Gp$r3viCc203345`; the exception is
+  `INFUATHQSQL:1450 / INFA_MFT_STAGE` which uses `simah@123`. The full list
+  was provided by the sheet owner.
+- `sybase_creds` — 1 entry: `SYBDWHUATHQ:5000 SIMAHDWH GPUser1 / Si/19-80\@h`
+  (Sybase ASE TDS; the legacy `{SQL Server}` ODBC driver on the VDI does
+  NOT speak Sybase TDS — needs DataDirect ODBC or FreeTDS path).
+- `ssh_bridge_pwd` + `tunnel_map` (see ssh-bridge section below).
+- `table_status_webhook` — Teams self-post URL.
+
+## Status / "you are here" (2026-06-08)
 **Project relocated** out of `tester/` to its own folder (see Location & layout
 above) — open THIS folder as the workspace.
 
