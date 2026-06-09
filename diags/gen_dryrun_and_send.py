@@ -138,6 +138,13 @@ def main():
         filled = filled.replace('"__TUNNEL_MAP_JSON__"', json.dumps(json.dumps(tmap)))
         print(f"injected tunnel_map ({len(tmap)} forwards)")
 
+    # 5c) inject the first sybase cred (single-target Sybase probes)
+    if '"__SYBASE_CRED_JSON__"' in filled:
+        sybs = load_secret("sybase_creds") or []
+        cred = sybs[0] if sybs else {}
+        filled = filled.replace('"__SYBASE_CRED_JSON__"', json.dumps(json.dumps(cred)))
+        print(f"injected sybase_cred ({'present' if cred else 'EMPTY'})")
+
     # 6) inject DB-name aliases (sheet Source-Database -> real server db name)
     if '"__DB_ALIAS_JSON__"' in filled:
         dp = os.path.join(REPO_ROOT, "db_aliases.json")
