@@ -292,12 +292,11 @@ open + the VDI watcher alive.
   (Moarif / LEIPortal / LINQ2SIMAH / KSAPOC) and **DEVDB01:1450**
   (IdentityLei). The other 4 originally firewalled hosts are now covered by
   the ssh-bridge tunnel — drop them from any open network ticket.
-- **SIMAH_UNIFIED on DBMSTRUAT (67 rows)** — server up, login `gpuatsrvusr`
-  rejected `28000 / 18456` against `master` AND target DB AND no-database
-  connect. NOT a DB-availability problem (earlier "DB down" classification
-  was wrong). DBA needs to check `gpuatsrvusr` on that instance — likely
-  dropped or disabled. State 38 vs 1/7/8 invisible via legacy `{SQL Server}`
-  driver.
+- ~~**SIMAH_UNIFIED on DBMSTRUAT**~~ — **RESOLVED 2026-06-11.** DBA reset
+  `gpuatsrvusr` on DBMSTRUAT:1450. `check_simah_unified_v4` confirms 4/4 OK
+  (VDI-direct + via-.81 tunnel, both target DB + master). Pilot prereq probe
+  closed 61/67 rows immediately; remaining 6 are MISSING_TABLE_SRC (sheet
+  name/DDL mismatch, EDWH-pattern — sheet owner action).
 - **Sybase SIMAHDWH (78 rows)** — TCP-reachable, ODBC DataDirect syntax OK,
   but `28000 Login Failed`; needs correct creds.
 - **EDWH on DQUATIDQ:1450 (71 rows)** — visible but `USE` denied → DBA grant.

@@ -34,7 +34,7 @@ REACH = [
     ["DATAHUBDEV01:1450", "OPEN/VDI", "OK", "HUB, POOL"],
     ["DBUATCJ2:1450", "OPEN/VDI", "OK", "UAT_B2C* (+ AMSConsumer); sheet SIMAT_B2C* are aliases"],
     ["DQUATIDQ:1450", "OPEN/VDI", "OK", "SIMAHDQ, SIMAHDQ_REP; EDWH visible but USE denied"],
-    ["DBMSTRUAT:1450", "OPEN/VDI", "FAIL 18456", "SIMAH_UNIFIED — login rejected server-side (creds problem, NOT DB down)"],
+    ["DBMSTRUAT:1450", "OPEN/VDI", "OK", "SIMAH_UNIFIED — login confirmed 2026-06-11 (DBA reset complete)"],
     ["DBUATCJ2:1451 (InstantUpdate)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31451"],
     ["DBUATCJ2:1452 (Identity)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31452"],
     ["DBUATCJ2:1453 (Enquiry)", "TUNNEL/.81", "OK", "via ssh-bridge -> localhost:31453"],
@@ -53,7 +53,7 @@ ALIASES = [
 ACTIONS = [
     ["network", "Open firewall from UAT GP cluster + VDI subnets to DBSIMAHUAT1:1450 and DEVDB01:1450 (other earlier targets now covered by ssh-bridge tunnel)"],
     ["DBA", "Grant gpuatsrvusr USE permission on EDWH at DQUATIDQ:1450 (visible but denied)"],
-    ["DBA", "Reset / re-enable SQL login gpuatsrvusr on DBMSTRUAT:1450 (server returns 28000/18456 — login rejected, NOT a DB-availability issue)"],
+    ["sheet owner", "SIMAH_UNIFIED has 6 rows with table names that don't exist in source DB — likely typo or table not yet created (login works, 61 of 67 rows verified Done 2026-06-11)"],
     ["checker", "SIMAHDWH (Sybase): provide working creds — current ones get 28000 Login Failed via DataDirect ODBC"],
     ["checker", "Add MSSQL creds for SIMAHDQ / HUB / POOL / leid / Molim_Enquiry (servers reachable from VDI, just no profile yet)"],
 ]
@@ -87,7 +87,7 @@ def main():
         if dl == "simahdwh": reason["Sybase SIMAHDWH (working creds pending)"] += 1
         elif dl == "edwh": reason["PERM — EDWH visible but USE denied (DBA grant)"] += 1
         elif dl == "simah_mscrm": reason["SIMAH_MSCRM — bridge route, awaiting next cycle"] += 1
-        elif dl == "simah_unified": reason["SIMAH_UNIFIED login rejected on DBMSTRUAT (28000/18456 — DBA reset)"] += 1
+        elif dl == "simah_unified": reason["SIMAH_UNIFIED — table missing in source (sheet name?) — login confirmed working"] += 1
         elif dl in FIREWALL: reason["firewall — DBSIMAHUAT1 / DEVDB01 unreachable (network tkt open)"] += 1
         elif "DB2" in sysn or dl == "b7031210": reason["DB2i (outside the MSSQL probe)"] += 1
         else: reason["table not found in source DB / other"] += 1
